@@ -4,6 +4,7 @@ import asyncio
 import argparse
 import logging
 import signal
+import os
 import sys
 
 DEFAULT_GEOMETRY = "1000x750"
@@ -13,52 +14,65 @@ log = logging.getLogger()
 class Runner:
     def __init__(self, args):
         self.args = args
-
+        self.display_number = 100 # TODO: generate a unique display number
+        self.loop = asyncio.get_event_loop()
 
     @asyncio.coroutine
-    def start(self):
-        loop = asyncio.get_event_loop()
+    def start_xserver(self):
+        # When starting an X server, if the X server sees that SIGUSR1 is
+        # ignored, it sends SIGUSR1 to the parent process when it is ready to
+        # accept connections. We wait until we receive SIGUSR1 before declaring
+        # that the X server has been started.
 
-        future = loop.create_future()
-
+        server_ready = self.loop.create_future()
         def _on_sigusr1():
-            log.info("SIGUSR1")
-            loop.remove_signal_handler(signal.SIGUSR1)
-            future.set_result(True)
-        loop.add_signal_handler(signal.SIGUSR1, _on_sigusr1)
-
+            self.loop.remove_signal_handler(signal.SIGUSR1)
+            server_ready.set_result(True)
+        self.loop.add_signal_handler(signal.SIGUSR1, _on_sigusr1)
 
         def _before_xserver():
-            # This is part of the protocol for starting an X server: if the X
-            # server sees that SIGUSR1 is ignored, it sends SIGUSR1 to the
-            # parent process when it is ready to accept connections
             signal.signal(signal.SIGUSR1, signal.SIG_IGN)
-
-        log.info("Starting")
         self.xserver = yield from asyncio.create_subprocess_exec(
                 "Xtigervnc",
                 "-geometry", self.args.geometry,
                 "-desktop", self.args.title,
                 "-SecurityTypes", "None",
                 "-localhost",
-                ":100", # TODO: generate a unique display number
+                ":{}".format(self.display_number),
                 preexec_fn=_before_xserver,
-                )
+        )
 
-        log.info("Started")
-        yield from future
+        yield from server_ready
+
+
+    @asyncio.coroutine
+    def start_xclient(self):
+        env = dict(os.environ)
+        env["DISPLAY"] = ":{}".format(self.display_number)
+        self.xclient = yield from asyncio.create_subprocess_exec(
+                *self.args.cmd,
+                env=env,
+        )
+
+    @asyncio.coroutine
+    def start(self):
+        log.info("Starting X server")
+        yield from self.start_xserver()
+
+        log.info("Starting X client")
+        yield from self.start_xclient()
 
         log.info("Ready for connections")
         yield from asyncio.sleep(3)
 
         log.info("Terminating")
+        self.xclient.terminate()
         self.xserver.terminate()
 
         log.info("Waiting")
+        yield from self.xclient.wait()
         yield from self.xserver.wait()
 
-        log.info("Terminated")
-        loop.stop()
 
 
 def main():
