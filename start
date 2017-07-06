@@ -44,7 +44,8 @@ class Runner:
             signal.signal(signal.SIGUSR1, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.xserver = yield from asyncio.create_subprocess_exec(
-                "Xtigervnc",
+                "Xvnc4", "-ac",
+                #"Xtigervnc",
                 "-geometry", self.args.geometry,
                 "-desktop", self.args.title,
                 "-SecurityTypes", "None",
@@ -109,7 +110,7 @@ class Runner:
         yield from self.start_webserver()
 
         log.info("Waiting for web server to start")
-        yield from self.wait_for_listen("localhost", self.args.port)
+        yield from self.wait_for_listen("127.0.0.1", self.args.port)
 
         connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=self.args.port)
         log.info("Connect using %s", connect_url)
