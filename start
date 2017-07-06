@@ -6,6 +6,8 @@ import logging
 import signal
 import os
 import sys
+import socket
+
 
 DEFAULT_GEOMETRY = "1000x750"
 
@@ -17,6 +19,17 @@ class Runner:
         self.display_number = 100 # TODO: generate a unique display number
         self.loop = asyncio.get_event_loop()
 
+    def create_future_for_signal(self, signum=signal.SIGINT):
+        """
+        Create a future that is set to True when the given signal is received
+        """
+        signal_received = self.loop.create_future()
+        def _on_signal():
+            self.loop.remove_signal_handler(signum)
+            signal_received.set_result(True)
+        self.loop.add_signal_handler(signum, _on_signal)
+        return signal_received
+
     @asyncio.coroutine
     def start_xserver(self):
         # When starting an X server, if the X server sees that SIGUSR1 is
@@ -24,14 +37,11 @@ class Runner:
         # accept connections. We wait until we receive SIGUSR1 before declaring
         # that the X server has been started.
 
-        server_ready = self.loop.create_future()
-        def _on_sigusr1():
-            self.loop.remove_signal_handler(signal.SIGUSR1)
-            server_ready.set_result(True)
-        self.loop.add_signal_handler(signal.SIGUSR1, _on_sigusr1)
+        server_ready = self.create_future_for_signal(signal.SIGUSR1)
 
         def _before_xserver():
             signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.xserver = yield from asyncio.create_subprocess_exec(
                 "Xtigervnc",
                 "-geometry", self.args.geometry,
@@ -49,10 +59,42 @@ class Runner:
     def start_xclient(self):
         env = dict(os.environ)
         env["DISPLAY"] = ":{}".format(self.display_number)
+        def _preexec():
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.xclient = yield from asyncio.create_subprocess_exec(
                 *self.args.cmd,
+                preexec_fn=_preexec,
                 env=env,
         )
+
+    @asyncio.coroutine
+    def start_webserver(self):
+        def _preexec():
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self.webserver = yield from asyncio.create_subprocess_exec(
+                "websockify",
+                "--web", "/usr/share/novnc/",
+                str(self.args.port),
+                "localhost:{}".format(5900 + self.display_number),
+                preexec_fn=_preexec,
+        )
+
+
+    @asyncio.coroutine
+    def wait_for_listen(self, host, port):
+        sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
+
+        try:
+            while True:
+                try:
+                    yield from self.loop.sock_connect(sock, (host, port))
+                except ConnectionRefusedError:
+                    yield from asyncio.sleep(0.2)
+                else:
+                    return
+        finally:
+            sock.close()
+
 
     @asyncio.coroutine
     def start(self):
@@ -62,17 +104,27 @@ class Runner:
         log.info("Starting X client")
         yield from self.start_xclient()
 
-        log.info("Ready for connections")
-        yield from asyncio.sleep(3)
+        log.info("Starting web server")
+        yield from self.start_webserver()
+
+        log.info("Waiting for web server to start")
+        yield from self.wait_for_listen("localhost", self.args.port)
+
+        connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=self.args.port)
+        log.info("Connect using %s", connect_url)
+
+        log.info("Ready for connections, interrupt with ^C")
+        yield from self.create_future_for_signal(signal.SIGINT)
 
         log.info("Terminating")
         self.xclient.terminate()
         self.xserver.terminate()
+        self.webserver.terminate()
 
         log.info("Waiting")
         yield from self.xclient.wait()
         yield from self.xserver.wait()
-
+        yield from self.webserver.wait()
 
 
 def main():
@@ -83,6 +135,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="debug output")
     parser.add_argument("--geometry", action="store", default=DEFAULT_GEOMETRY, help="X display geometry")
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
+    parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
     parser.add_argument("cmd", nargs="+", help="command and arguments to run")
 
     args = parser.parse_args()
