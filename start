@@ -23,7 +23,8 @@ class Runner:
         """
         Create a future that is set to True when the given signal is received
         """
-        signal_received = self.loop.create_future()
+        signal_received = asyncio.Future()
+        # python3.5: signal_received = self.loop.create_future()
         def _on_signal():
             self.loop.remove_signal_handler(signum)
             signal_received.set_result(True)
@@ -64,7 +65,7 @@ class Runner:
         self.xclient = yield from asyncio.create_subprocess_exec(
                 *self.args.cmd,
                 preexec_fn=_preexec,
-                env=env,
+                env=env
         )
 
     @asyncio.coroutine
