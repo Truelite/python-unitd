@@ -14,6 +14,24 @@ DEFAULT_GEOMETRY = "1000x750"
 
 log = logging.getLogger()
 
+class ManagedCommand:
+    """
+    Run a command, track its execution, log its standard output and standard
+    error
+    """
+    def __init__(self, name, cmdline, **kw):
+        self.name = name
+        self.cmdline = cmdline
+        self.subprocess_kwargs = kw
+        self.proc = None
+
+    @asyncio.coroutine
+    def start(self):
+        log.debug("%s: cmdline: %s", self.name, " ".join(shlex.quote(x) for x in self.cmdline))
+        self.proc = yield from asyncio.create_subprocess_exec(
+            *self.cmdline, **self.subprocess_kwargs)
+
+
 
 class RemoteApplication:
     """
@@ -55,9 +73,6 @@ class RemoteApplication:
         self.loop.add_signal_handler(signum, _on_signal)
         return signal_received
 
-    def _log_cmd(self, args):
-        log.debug("Starting %s", " ".join(shlex.quote(x) for x in args))
-
     @asyncio.coroutine
     def start_xserver(self):
         """
@@ -80,9 +95,9 @@ class RemoteApplication:
                "-SecurityTypes", "None",
                "-localhost",
                ":{}".format(self.display_number))
-        self._log_cmd(cmd)
-        self.xserver = yield from asyncio.create_subprocess_exec(
-            *cmd, preexec_fn=_before_xserver)
+        cmd = ManagedCommand("xserver", cmd, preexec_fn=_before_xserver)
+        yield from cmd.start()
+        self.xserver = cmd.proc
 
         yield from server_ready
 
@@ -95,12 +110,9 @@ class RemoteApplication:
         env["DISPLAY"] = ":{}".format(self.display_number)
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
-        self._log_cmd(self.cmdline)
-        self.xclient = yield from asyncio.create_subprocess_exec(
-                *self.cmdline,
-                preexec_fn=_preexec,
-                env=env
-        )
+        cmd = ManagedCommand("xclient", self.cmdline, preexec_fn=_preexec, env=env)
+        yield from cmd.start()
+        self.xclient = cmd.proc
 
     @asyncio.coroutine
     def start_webserver(self):
@@ -114,9 +126,9 @@ class RemoteApplication:
                "--web", "/usr/share/novnc/",
                str(self.websocket_listen_port),
                "localhost:{}".format(5900 + self.display_number))
-        self._log_cmd(cmd)
-        self.webserver = yield from asyncio.create_subprocess_exec(
-            *cmd, preexec_fn=_preexec)
+        cmd = ManagedCommand("websocksify", cmd, preexec_fn=_preexec)
+        yield from cmd.start()
+        self.webserver = cmd.proc
 
     @asyncio.coroutine
     def wait_for_listen(self, host, port):
