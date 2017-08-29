@@ -1,23 +1,46 @@
 #!/usr/bin/python3
-
 import asyncio
 import argparse
 import logging
 import signal
 import os
 import sys
+import shutil
 import socket
 
-
+XSERVERS = ("Xtigervnc", "Xvnc4")
 DEFAULT_GEOMETRY = "1000x750"
 
 log = logging.getLogger()
 
-class Runner:
-    def __init__(self, args):
-        self.args = args
+
+class RemoteApplication:
+    """
+    Run an application inside a private VNC server, and export the VNC
+    connection to it over websocket
+    """
+    def __init__(self,
+                 cmdline, websocket_listen_port,
+                 desktop_title="Remote application",
+                 desktop_geometry=DEFAULT_GEOMETRY):
+        self.cmdline = cmdline
+        self.websocket_listen_port = websocket_listen_port
+        self.desktop_title = desktop_title
+        self.desktop_geometry = desktop_geometry
+
+        for xserver in XSERVERS:
+            self.xserver_path = shutil.which(xserver)
+            log.debug("X server lookup: tried %s, got %s", xserver, self.xserver_path)
+            if self.xserver_path is not None:
+                break
+        log.debug("X server lookup: selected X server %s", self.xserver_path)
+        if self.xserver_path is None:
+            raise RuntimeError("X server not found. Tried: " + ", ".join(XSERVERS))
+
         self.display_number = 100 # TODO: generate a unique display number
         self.loop = asyncio.get_event_loop()
+        self.xserver = None
+        self.xclient = None
 
     def create_future_for_signal(self, signum=signal.SIGINT):
         """
@@ -33,6 +56,10 @@ class Runner:
 
     @asyncio.coroutine
     def start_xserver(self):
+        """
+        Start the X server and return when it is ready to accept connections
+        from X clients
+        """
         # When starting an X server, if the X server sees that SIGUSR1 is
         # ignored, it sends SIGUSR1 to the parent process when it is ready to
         # accept connections. We wait until we receive SIGUSR1 before declaring
@@ -44,10 +71,10 @@ class Runner:
             signal.signal(signal.SIGUSR1, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.xserver = yield from asyncio.create_subprocess_exec(
-                "Xvnc4", "-ac",
+                self.xserver_path, "-ac",
                 #"Xtigervnc",
-                "-geometry", self.args.geometry,
-                "-desktop", self.args.title,
+                "-geometry", self.desktop_geometry,
+                "-desktop", self.desktop_title,
                 "-SecurityTypes", "None",
                 "-localhost",
                 ":{}".format(self.display_number),
@@ -56,34 +83,42 @@ class Runner:
 
         yield from server_ready
 
-
     @asyncio.coroutine
     def start_xclient(self):
+        """
+        Start the X client
+        """
         env = dict(os.environ)
         env["DISPLAY"] = ":{}".format(self.display_number)
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.xclient = yield from asyncio.create_subprocess_exec(
-                *self.args.cmd,
+                *self.cmdline,
                 preexec_fn=_preexec,
                 env=env
         )
 
     @asyncio.coroutine
     def start_webserver(self):
+        """
+        Start websockify to export the X client connection via a websocket
+        server
+        """
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.webserver = yield from asyncio.create_subprocess_exec(
                 "websockify",
                 "--web", "/usr/share/novnc/",
-                str(self.args.port),
+                str(self.websocket_listen_port),
                 "localhost:{}".format(5900 + self.display_number),
                 preexec_fn=_preexec,
         )
 
-
     @asyncio.coroutine
     def wait_for_listen(self, host, port):
+        """
+        Try to connect to a (host, port) until something starts listening on it
+        """
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
 
         try:
@@ -99,7 +134,11 @@ class Runner:
 
 
     @asyncio.coroutine
-    def start(self):
+    def run(self, open_in_browser=False):
+        """
+        Run the X server, X application and websocket proxy, until any of them
+        quits
+        """
         log.info("Starting X server")
         yield from self.start_xserver()
 
@@ -110,10 +149,14 @@ class Runner:
         yield from self.start_webserver()
 
         log.info("Waiting for web server to start")
-        yield from self.wait_for_listen("127.0.0.1", self.args.port)
+        yield from self.wait_for_listen("127.0.0.1", self.websocket_listen_port)
 
-        connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=self.args.port)
+        connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=self.websocket_listen_port)
         log.info("Connect using %s", connect_url)
+
+        if open_in_browser:
+            import webbrowser
+            webbrowser.open(connect_url)
 
         log.info("Ready for connections, interrupt with ^C")
         yield from self.create_future_for_signal(signal.SIGINT)
@@ -138,6 +181,7 @@ def main():
     parser.add_argument("--geometry", action="store", default=DEFAULT_GEOMETRY, help="X display geometry")
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
     parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
+    parser.add_argument("--open", action="store_true", help="open application in browser")
     parser.add_argument("cmd", nargs="+", help="command and arguments to run")
 
     args = parser.parse_args()
@@ -150,11 +194,15 @@ def main():
         level = logging.INFO
     logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
 
-    runner = Runner(args)
+    runner = RemoteApplication(
+            cmdline=args.cmd,
+            websocket_listen_port=args.port,
+            desktop_title=args.title,
+            desktop_geometry=args.geometry)
 
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(runner.start())
+        loop.run_until_complete(runner.run(open_in_browser=args.open))
     finally:
         loop.close()
 
