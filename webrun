@@ -34,6 +34,9 @@ class ManagedCommand:
 
     @asyncio.coroutine
     def start(self):
+        """
+        Start execution of the command, and logging of its stdout and stderr
+        """
         log.debug("%s: cmdline: %s", self.name, " ".join(shlex.quote(x) for x in self.cmdline))
         self.proc = yield from asyncio.create_subprocess_exec(
             *self.cmdline, **self.subprocess_kwargs)
@@ -49,14 +52,17 @@ class ManagedCommand:
             log.debug("%s:%s: ", self.name, line.decode('utf8').rstrip())
 
     @asyncio.coroutine
-    def wait_or_terminate(self):
+    def wait_or_terminate(self, wait_time=1):
+        """
+        Wait for the program to quit, calling terminate() on it if it does not
+        """
         #if self.proc.returncode is not None:
         #    log.debug("%s: exited with result %d", self.name, self.proc.returncode)
         #    return
 
         while True:
             try:
-                result = yield from asyncio.wait_for(self.proc.wait(), 1)
+                result = yield from asyncio.wait_for(self.proc.wait(), wait_time)
             except asyncio.TimeoutError:
                 pass
             else:
@@ -155,6 +161,7 @@ class RemoteApplication:
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
         cmd = ("websockify",
+               "--run-once",
                "--web", "/usr/share/novnc/",
                str(self.websocket_listen_port),
                "localhost:{}".format(5900 + self.display_number))
