@@ -22,14 +22,31 @@ class ManagedCommand:
     def __init__(self, name, cmdline, **kw):
         self.name = name
         self.cmdline = cmdline
+        # TODO: in the future, stdin could be connected to webrun's stdin, so
+        # that one can pipe output to an X client exported to a web page
+        kw["stdin"] = asyncio.subprocess.DEVNULL
+        kw["stdout"] = asyncio.subprocess.PIPE
+        kw["stderr"] = asyncio.subprocess.PIPE
         self.subprocess_kwargs = kw
         self.proc = None
+        self.stdout_logger = None
+        self.stderr_logger = None
 
     @asyncio.coroutine
     def start(self):
         log.debug("%s: cmdline: %s", self.name, " ".join(shlex.quote(x) for x in self.cmdline))
         self.proc = yield from asyncio.create_subprocess_exec(
             *self.cmdline, **self.subprocess_kwargs)
+        loop = asyncio.get_event_loop()
+        self.stdout_logger = loop.create_task(self._log_fd("stdout", self.proc.stdout))
+        self.stderr_logger = loop.create_task(self._log_fd("stderr", self.proc.stderr))
+
+    @asyncio.coroutine
+    def _log_fd(self, prefix, fd):
+        while True:
+            line = yield from fd.readline()
+            if not line: break
+            log.debug("%s:%s: ", self.name, line.decode('utf8').rstrip())
 
     @asyncio.coroutine
     def wait_or_terminate(self):
