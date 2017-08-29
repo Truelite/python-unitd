@@ -31,6 +31,23 @@ class ManagedCommand:
         self.proc = yield from asyncio.create_subprocess_exec(
             *self.cmdline, **self.subprocess_kwargs)
 
+    @asyncio.coroutine
+    def wait_or_terminate(self):
+        #if self.proc.returncode is not None:
+        #    log.debug("%s: exited with result %d", self.name, self.proc.returncode)
+        #    return
+
+        while True:
+            try:
+                result = yield from asyncio.wait_for(self.proc.wait(), 1)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                log.debug("%s: exited with result %d", self.name, self.proc.returncode)
+                return
+            
+            log.debug("%s: terminating", self.name)
+            self.proc.terminate()
 
 
 class RemoteApplication:
@@ -95,9 +112,8 @@ class RemoteApplication:
                "-SecurityTypes", "None",
                "-localhost",
                ":{}".format(self.display_number))
-        cmd = ManagedCommand("xserver", cmd, preexec_fn=_before_xserver)
-        yield from cmd.start()
-        self.xserver = cmd.proc
+        self.xserver = ManagedCommand("xserver", cmd, preexec_fn=_before_xserver)
+        yield from self.xserver.start()
 
         yield from server_ready
 
@@ -110,9 +126,8 @@ class RemoteApplication:
         env["DISPLAY"] = ":{}".format(self.display_number)
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
-        cmd = ManagedCommand("xclient", self.cmdline, preexec_fn=_preexec, env=env)
-        yield from cmd.start()
-        self.xclient = cmd.proc
+        self.xclient = ManagedCommand("xclient", self.cmdline, preexec_fn=_preexec, env=env)
+        yield from self.xclient.start()
 
     @asyncio.coroutine
     def start_webserver(self):
@@ -126,9 +141,8 @@ class RemoteApplication:
                "--web", "/usr/share/novnc/",
                str(self.websocket_listen_port),
                "localhost:{}".format(5900 + self.display_number))
-        cmd = ManagedCommand("websocksify", cmd, preexec_fn=_preexec)
-        yield from cmd.start()
-        self.webserver = cmd.proc
+        self.webserver = ManagedCommand("websocksify", cmd, preexec_fn=_preexec)
+        yield from self.webserver.start()
 
     @asyncio.coroutine
     def wait_for_listen(self, host, port):
@@ -177,19 +191,17 @@ class RemoteApplication:
         log.info("Ready for connections, interrupt with ^C")
         done, pending = yield from asyncio.wait(
                 (
-                    self.xclient.wait(),
-                    self.xserver.wait(),
-                    self.webserver.wait(),
+                    self.xclient.proc.wait(),
+                    self.xserver.proc.wait(),
+                    self.webserver.proc.wait(),
                     self.create_future_for_signal(signal.SIGINT),
                 ), return_when=asyncio.FIRST_COMPLETED)
 
         log.info("Terminating")
-        if self.xclient.returncode is None: self.xclient.terminate()
-        if self.xserver.returncode is None: self.xserver.terminate()
-        if self.webserver.returncode is None: self.webserver.terminate()
-
-        log.info("Waiting")
-        yield from asyncio.wait((self.xclient.wait(), self.xserver.wait(), self.webserver.wait()), return_when=asyncio.ALL_COMPLETED)
+        yield from asyncio.wait((
+            self.xclient.wait_or_terminate(),
+            self.xserver.wait_or_terminate(),
+            self.webserver.wait_or_terminate()), return_when=asyncio.ALL_COMPLETED)
 
 
 def main():
