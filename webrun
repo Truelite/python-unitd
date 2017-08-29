@@ -6,6 +6,7 @@ import signal
 import os
 import sys
 import shutil
+import shlex
 import socket
 
 XSERVERS = ("Xtigervnc", "Xvnc4")
@@ -54,6 +55,9 @@ class RemoteApplication:
         self.loop.add_signal_handler(signum, _on_signal)
         return signal_received
 
+    def _log_cmd(self, args):
+        log.debug("Starting %s", " ".join(shlex.quote(x) for x in args))
+
     @asyncio.coroutine
     def start_xserver(self):
         """
@@ -70,16 +74,15 @@ class RemoteApplication:
         def _before_xserver():
             signal.signal(signal.SIGUSR1, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
+        cmd = (self.xserver_path, "-ac",
+               "-geometry", self.desktop_geometry,
+               "-desktop", self.desktop_title,
+               "-SecurityTypes", "None",
+               "-localhost",
+               ":{}".format(self.display_number))
+        self._log_cmd(cmd)
         self.xserver = yield from asyncio.create_subprocess_exec(
-                self.xserver_path, "-ac",
-                #"Xtigervnc",
-                "-geometry", self.desktop_geometry,
-                "-desktop", self.desktop_title,
-                "-SecurityTypes", "None",
-                "-localhost",
-                ":{}".format(self.display_number),
-                preexec_fn=_before_xserver,
-        )
+            *cmd, preexec_fn=_before_xserver)
 
         yield from server_ready
 
@@ -92,6 +95,7 @@ class RemoteApplication:
         env["DISPLAY"] = ":{}".format(self.display_number)
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self._log_cmd(self.cmdline)
         self.xclient = yield from asyncio.create_subprocess_exec(
                 *self.cmdline,
                 preexec_fn=_preexec,
@@ -106,13 +110,13 @@ class RemoteApplication:
         """
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
+        cmd = ("websockify",
+               "--web", "/usr/share/novnc/",
+               str(self.websocket_listen_port),
+               "localhost:{}".format(5900 + self.display_number))
+        self._log_cmd(cmd)
         self.webserver = yield from asyncio.create_subprocess_exec(
-                "websockify",
-                "--web", "/usr/share/novnc/",
-                str(self.websocket_listen_port),
-                "localhost:{}".format(5900 + self.display_number),
-                preexec_fn=_preexec,
-        )
+            *cmd, preexec_fn=_preexec)
 
     @asyncio.coroutine
     def wait_for_listen(self, host, port):
@@ -159,17 +163,21 @@ class RemoteApplication:
             webbrowser.open(connect_url)
 
         log.info("Ready for connections, interrupt with ^C")
-        yield from self.create_future_for_signal(signal.SIGINT)
+        done, pending = yield from asyncio.wait(
+                (
+                    self.xclient.wait(),
+                    self.xserver.wait(),
+                    self.webserver.wait(),
+                    self.create_future_for_signal(signal.SIGINT),
+                ), return_when=asyncio.FIRST_COMPLETED)
 
         log.info("Terminating")
-        self.xclient.terminate()
-        self.xserver.terminate()
-        self.webserver.terminate()
+        if self.xclient.returncode is None: self.xclient.terminate()
+        if self.xserver.returncode is None: self.xserver.terminate()
+        if self.webserver.returncode is None: self.webserver.terminate()
 
         log.info("Waiting")
-        yield from self.xclient.wait()
-        yield from self.xserver.wait()
-        yield from self.webserver.wait()
+        yield from asyncio.wait((self.xclient.wait(), self.xserver.wait(), self.webserver.wait()), return_when=asyncio.ALL_COMPLETED)
 
 
 def main():
