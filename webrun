@@ -11,6 +11,7 @@ import socket
 
 XSERVERS = ("Xtigervnc", "Xvnc4")
 DEFAULT_GEOMETRY = "1000x750"
+DEFAULT_DISPLAY = 10
 
 log = logging.getLogger()
 
@@ -81,7 +82,8 @@ class RemoteApplication:
     def __init__(self,
                  cmdline, websocket_listen_port,
                  desktop_title="Remote application",
-                 desktop_geometry=DEFAULT_GEOMETRY):
+                 desktop_geometry=DEFAULT_GEOMETRY,
+                 desktop_display=DEFAULT_DISPLAY):
         self.cmdline = cmdline
         self.websocket_listen_port = websocket_listen_port
         self.desktop_title = desktop_title
@@ -96,7 +98,7 @@ class RemoteApplication:
         if self.xserver_path is None:
             raise RuntimeError("X server not found. Tried: " + ", ".join(XSERVERS))
 
-        self.display_number = 100 # TODO: generate a unique display number
+        self.display_number = DEFAULT_DISPLAY # TODO: generate a unique display number
         self.loop = asyncio.get_event_loop()
         self.xserver = None
         self.xclient = None
@@ -235,6 +237,7 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="verbose output")
     parser.add_argument("--debug", action="store_true", help="debug output")
     parser.add_argument("--geometry", action="store", default=DEFAULT_GEOMETRY, help="X display geometry")
+    parser.add_argument("--display", action="store", type=int, default=DEFAULT_DISPLAY, help="X display number")
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
     parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
     parser.add_argument("--open", action="store_true", help="open application in browser")
@@ -254,7 +257,8 @@ def main():
             cmdline=args.cmd,
             websocket_listen_port=args.port,
             desktop_title=args.title,
-            desktop_geometry=args.geometry)
+            desktop_geometry=args.geometry,
+            desktop_display=args.display)
 
     loop = asyncio.get_event_loop()
     try:
