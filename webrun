@@ -15,6 +15,11 @@ DEFAULT_DISPLAY = 10
 
 log = logging.getLogger()
 
+
+class Fail(RuntimeError):
+    pass
+
+
 class ManagedCommand:
     """
     Run a command, track its execution, log its standard output and standard
@@ -96,7 +101,7 @@ class RemoteApplication:
                 break
         log.debug("X server lookup: selected X server %s", self.xserver_path)
         if self.xserver_path is None:
-            raise RuntimeError("X server not found. Tried: " + ", ".join(XSERVERS))
+            raise Fail("X server not found. Tried: " + ", ".join(XSERVERS))
 
         self.display_number = DEFAULT_DISPLAY # TODO: generate a unique display number
         self.loop = asyncio.get_event_loop()
@@ -140,7 +145,16 @@ class RemoteApplication:
         self.xserver = ManagedCommand("xserver", cmd, preexec_fn=_before_xserver)
         yield from self.xserver.start()
 
-        yield from server_ready
+        # Also monitor for the x server quitting, otherwise in case of an issue
+        # (wrong command line, or display number already in use) we never get
+        # the signal and we wait forever
+        done, pending = yield from asyncio.wait((
+            server_ready,
+            self.xserver.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
+        for p in pending:
+            p.cancel()
+        if self.xserver.proc.returncode is not None:
+            raise Fail("Failed to start the X server")
 
     @asyncio.coroutine
     def start_xclient(self):
@@ -188,12 +202,11 @@ class RemoteApplication:
         finally:
             sock.close()
 
-
     @asyncio.coroutine
-    def run(self, open_in_browser=False):
+    def start(self):
         """
-        Run the X server, X application and websocket proxy, until any of them
-        quits
+        Start the X server, X application and websocket proxy, returning when
+        they are all ready and operational
         """
         log.info("Starting X server")
         yield from self.start_xserver()
@@ -207,12 +220,12 @@ class RemoteApplication:
         log.info("Waiting for web server to start")
         yield from self.wait_for_listen("127.0.0.1", self.websocket_listen_port)
 
-        connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=self.websocket_listen_port)
-        log.info("Connect using %s", connect_url)
-
-        if open_in_browser:
-            import webbrowser
-            webbrowser.open(connect_url)
+    @asyncio.coroutine
+    def wait_and_cleanup(self):
+        """
+        Wait until any one of the X server, X application or websocket proxy
+        quits, then make sure all the others quit as well
+        """
 
         log.info("Ready for connections, interrupt with ^C")
         done, pending = yield from asyncio.wait(
@@ -262,10 +275,23 @@ def main():
 
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(runner.run(open_in_browser=args.open))
+        loop.run_until_complete(runner.start())
+
+        connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=runner.websocket_listen_port)
+        log.info("Connect using %s", connect_url)
+
+        if args.open:
+            import webbrowser
+            webbrowser.open(connect_url)
+
+        loop.run_until_complete(runner.wait_and_cleanup())
     finally:
         loop.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Fail as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
