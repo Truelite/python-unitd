@@ -219,9 +219,9 @@ def main():
         connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=runner.websocket_listen_port)
         log.info("Connect using %s", connect_url)
 
-        json.dump({
+        print(json.dumps({
             "url": connect_url,
-        }, sys.stdout)
+        }))
         sys.stdout.flush()
 
         if args.open:
