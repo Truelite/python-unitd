@@ -7,10 +7,19 @@ import logging
 log = logging.getLogger("unitd.process")
 
 class Process:
+    """
+    [Service]
+    SyslogIdentifier: string
+    ExecStart: [ strings|arg sequence ]
+     # @ prefix is not supported
+     # - prefix is not supported
+     # + prefix is not supported
+    """
     def __init__(self, name, unit=None, service=None):
         self.name = name
         self.unit = unit if unit is not None else {}
         self.service = service if service is not None else {}
+        self.log_tag = self.service.get("SyslogIdentifier", name)
 
 
 class SimpleProcess(Process):
@@ -46,7 +55,7 @@ class SimpleProcess(Process):
         Start execution of the command, and logging of its stdout and stderr
         """
         cmdline = self._get_cmdline()
-        log.debug("%s: cmdline: %s", self.name, " ".join(shlex.quote(x) for x in cmdline))
+        log.debug("%s: cmdline: %s", self.log_tag, " ".join(shlex.quote(x) for x in cmdline))
 
         kw = {}
         if self.env is not None:
@@ -61,6 +70,7 @@ class SimpleProcess(Process):
             stderr=asyncio.subprocess.PIPE,
             **kw,
         )
+        self.log_tag += "[{}]".format(self.proc.pid)
         loop = asyncio.get_event_loop()
         self.stdout_logger = loop.create_task(self._log_fd("stdout", self.proc.stdout))
         self.stderr_logger = loop.create_task(self._log_fd("stderr", self.proc.stderr))
@@ -70,7 +80,7 @@ class SimpleProcess(Process):
         while True:
             line = yield from fd.readline()
             if not line: break
-            log.debug("%s:%s: ", self.name, line.decode('utf8').rstrip())
+            log.debug("%s:%s: ", self.log_tag, line.decode('utf8').rstrip())
 
     @asyncio.coroutine
     def wait_or_terminate(self, wait_time=1):
@@ -87,8 +97,8 @@ class SimpleProcess(Process):
             except asyncio.TimeoutError:
                 pass
             else:
-                log.debug("%s: exited with result %d", self.name, self.proc.returncode)
+                log.debug("%s: exited with result %d", self.log_tag, self.proc.returncode)
                 return
             
-            log.debug("%s: terminating", self.name)
+            log.debug("%s: terminating", self.log_tag)
             self.proc.terminate()
