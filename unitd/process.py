@@ -15,11 +15,13 @@ class Process:
      # - prefix is not supported
      # + prefix is not supported
     """
-    def __init__(self, name, unit=None, service=None):
+    def __init__(self, name, unit=None, service=None, loop=None):
+        self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.name = name
         self.unit = unit if unit is not None else {}
         self.service = service if service is not None else {}
         self.log_tag = self.service.get("SyslogIdentifier", name)
+        self.returncode = self.loop.create_future()
 
 
 class SimpleProcess(Process):
@@ -27,8 +29,8 @@ class SimpleProcess(Process):
     Run a command, track its execution, log its standard output and standard
     error
     """
-    def __init__(self, name, unit=None, service=None, preexec_fn=None, env=None):
-        super().__init__(name, unit, service)
+    def __init__(self, name, unit=None, service=None, preexec_fn=None, env=None, loop=None):
+        super().__init__(name, unit, service, loop=loop)
         self.proc = None
         self.stdout_logger = None
         self.stderr_logger = None
@@ -68,12 +70,12 @@ class SimpleProcess(Process):
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            loop=self.loop,
             **kw,
         )
         self.log_tag += "[{}]".format(self.proc.pid)
-        loop = asyncio.get_event_loop()
-        self.stdout_logger = loop.create_task(self._log_fd("stdout", self.proc.stdout))
-        self.stderr_logger = loop.create_task(self._log_fd("stderr", self.proc.stderr))
+        self.stdout_logger = self.loop.create_task(self._log_fd("stdout", self.proc.stdout))
+        self.stderr_logger = self.loop.create_task(self._log_fd("stderr", self.proc.stderr))
 
     @asyncio.coroutine
     def _log_fd(self, prefix, fd):
@@ -93,12 +95,20 @@ class SimpleProcess(Process):
 
         while True:
             try:
-                result = yield from asyncio.wait_for(self.proc.wait(), wait_time)
+                result = yield from asyncio.wait_for(self.proc.wait(), wait_time, loop=self.loop)
             except asyncio.TimeoutError:
                 pass
             else:
                 log.debug("%s: exited with result %d", self.log_tag, self.proc.returncode)
+                self.stdout_logger.cancel()
+                self.stderr_logger.cancel()
+                self.returncode.set_result(result)
                 return
             
             log.debug("%s: terminating", self.log_tag)
             self.proc.terminate()
+
+    @asyncio.coroutine
+    def run(self):
+        yield from self.start()
+        yield from self.wait_or_terminate()

@@ -34,6 +34,7 @@ class AsyncTestCase(unittest.TestCase):
 
     @classmethod
     def _atexit(cls):
+        # TODO: see python issue 23548
         if not cls._ioloop_closed:
             asyncio.get_event_loop().close()
 
