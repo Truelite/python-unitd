@@ -54,8 +54,9 @@ class Xserver(SimpleProcess):
         for p in pending:
             p.cancel()
         if self.proc.returncode is not None:
-            raise Fail("Failed to start the X server")
-        log.debug("%s:X server started", self.log_tag)
+            log.warn("%s:failed to start X server", self.log_tag)
+        else:
+            log.debug("%s:X server started", self.log_tag)
 
 
 class Websockify(SimpleProcess):
