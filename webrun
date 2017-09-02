@@ -198,7 +198,7 @@ def start_everything(args):
             import webbrowser
             webbrowser.open(connect_url)
 
-        if args.daemon or args.half_daemon:
+        if args.daemon:
             devnull_fd = os.open("/dev/null", os.O_RDWR)
             os.dup2(devnull_fd, 0)
             os.dup2(devnull_fd, 1)
@@ -221,7 +221,6 @@ def main():
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
     parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
     parser.add_argument("--open", action="store_true", help="open application in browser")
-    parser.add_argument("--half-daemon", action="store_true", help="setsid, chdir, close file descriptors, but do not fork")
     parser.add_argument("--daemon", action="store_true", help="daemonize")
     parser.add_argument("cmd", nargs="+", help="command and arguments to run")
 
@@ -248,7 +247,7 @@ def main():
         os.dup2(fd_w, 1)
         os.close(fd_w)
 
-    if args.daemon or args.half_daemon:
+    if args.daemon:
         try:
             os.setsid()
         except PermissionError:
