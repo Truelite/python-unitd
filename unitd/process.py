@@ -21,7 +21,36 @@ class Process:
         self.unit = unit if unit is not None else {}
         self.service = service if service is not None else {}
         self.log_tag = self.service.get("SyslogIdentifier", name)
+        self.started = self.loop.create_future()
         self.returncode = self.loop.create_future()
+        self.task = None
+
+    @asyncio.coroutine
+    def _run_coroutine(self):
+        try:
+            yield from self._start()
+            if not self.started.cancelled():
+                self.started.set_result(True)
+            yield from self.proc.wait()
+            log.debug("%s:exited", self.log_tag)
+        finally:
+            if self.task.cancelled():
+                log.debug("%s:cancelled", self.log_tag)
+            yield from self._wait_or_terminate()
+
+    def start(self):
+        """
+        Create and schedule a task that starts the process and waits for its
+        completion.
+
+        If the task gets canceled, it will still make sure the underlying
+        process gets killed.
+
+        If the process has already been started, returns the existing task
+        """
+        if self.task is None:
+            self.task = self.loop.create_task(self._run_coroutine())
+        return self.task
 
 
 class SimpleProcess(Process):
@@ -52,12 +81,12 @@ class SimpleProcess(Process):
         return cmdline
 
     @asyncio.coroutine
-    def start(self):
+    def _start(self):
         """
         Start execution of the command, and logging of its stdout and stderr
         """
         cmdline = self._get_cmdline()
-        log.debug("%s: cmdline: %s", self.log_tag, " ".join(shlex.quote(x) for x in cmdline))
+        log.debug("%s:cmdline: %s", self.log_tag, " ".join(shlex.quote(x) for x in cmdline))
 
         kw = {}
         if self.env is not None:
@@ -82,33 +111,25 @@ class SimpleProcess(Process):
         while True:
             line = yield from fd.readline()
             if not line: break
-            log.debug("%s:%s: ", self.log_tag, line.decode('utf8').rstrip())
+            log.debug("%s:%s", self.log_tag, line.decode('utf8').rstrip())
 
     @asyncio.coroutine
-    def wait_or_terminate(self, wait_time=1):
+    def _wait_or_terminate(self, wait_time=1):
         """
         Wait for the program to quit, calling terminate() on it if it does not
         """
-        #if self.proc.returncode is not None:
-        #    log.debug("%s: exited with result %d", self.name, self.proc.returncode)
-        #    return
-
         while True:
             try:
                 result = yield from asyncio.wait_for(self.proc.wait(), wait_time, loop=self.loop)
             except asyncio.TimeoutError:
                 pass
             else:
-                log.debug("%s: exited with result %d", self.log_tag, self.proc.returncode)
+                log.debug("%s:exited with result %d", self.log_tag, self.proc.returncode)
                 self.stdout_logger.cancel()
                 self.stderr_logger.cancel()
-                self.returncode.set_result(result)
+                if not self.returncode.cancelled():
+                    self.returncode.set_result(result)
                 return
             
-            log.debug("%s: terminating", self.log_tag)
+            log.debug("%s:terminating", self.log_tag)
             self.proc.terminate()
-
-    @asyncio.coroutine
-    def run(self):
-        yield from self.start()
-        yield from self.wait_or_terminate()

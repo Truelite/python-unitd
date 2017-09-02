@@ -10,6 +10,8 @@ import shlex
 import json
 import socket
 from unitd import SimpleProcess
+from unitd.processpool import ProcessPool
+from unitd.signals import create_future_for_signal
 
 XSERVERS = ("Xtigervnc", "Xvnc4")
 DEFAULT_GEOMETRY = "1000x750"
@@ -20,6 +22,73 @@ log = logging.getLogger()
 
 class Fail(RuntimeError):
     pass
+
+
+class Xserver(SimpleProcess):
+    def __init__(self, cmdline, loop=None):
+        super().__init__("xserver", service={
+            "ExecStart": [cmdline],
+        }, preexec_fn=self._before_xserver, loop=loop)
+
+    def _before_xserver(self):
+        signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    @asyncio.coroutine
+    def _start(self):
+        # When starting an X server, if the X server sees that SIGUSR1 is
+        # ignored, it sends SIGUSR1 to the parent process when it is ready to
+        # accept connections. We wait until we receive SIGUSR1 before declaring
+        # that the X server has been started.
+
+        server_ready = create_future_for_signal(signal.SIGUSR1, loop=self.loop)
+        yield from super()._start()
+        log.debug("%s:X server starting", self.log_tag)
+
+        # Also monitor for the x server quitting, otherwise in case of an issue
+        # (wrong command line, or display number already in use) we never get
+        # the signal and we wait forever
+        done, pending = yield from asyncio.wait((
+            server_ready,
+            self.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
+        for p in pending:
+            p.cancel()
+        if self.proc.returncode is not None:
+            raise Fail("Failed to start the X server")
+        log.debug("%s:X server started", self.log_tag)
+
+
+class Websockify(SimpleProcess):
+    def __init__(self, cmdline, listen_port, loop=None):
+        super().__init__("websockify", service={
+            "ExecStart": [cmdline],
+        }, preexec_fn=self._preexec)
+        self.listen_port = listen_port
+
+    def _preexec(self):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    @asyncio.coroutine
+    def _start(self):
+        yield from super()._start()
+        yield from self._wait_for_listen("127.0.0.1", self.listen_port)
+
+    @asyncio.coroutine
+    def _wait_for_listen(self, host, port):
+        """
+        Try to connect to a (host, port) until something starts listening on it
+        """
+        sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
+        try:
+            while True:
+                try:
+                    yield from self.loop.sock_connect(sock, (host, port))
+                except ConnectionRefusedError:
+                    yield from asyncio.sleep(0.2)
+                else:
+                    return
+        finally:
+            sock.close()
 
 
 class RemoteApplication:
@@ -48,61 +117,29 @@ class RemoteApplication:
 
         self.display_number = DEFAULT_DISPLAY # TODO: generate a unique display number
         self.loop = asyncio.get_event_loop()
-        self.xserver = None
-        self.xclient = None
+        self.xserver = self._create_xserver()
+        self.xclient = self._create_xclient()
+        self.websockify = self._create_websockify()
+        self.started = asyncio.wait((
+            self.xserver.started,
+            self.xclient.started,
+            self.websockify.started,
+        ), loop=self.loop, return_when=asyncio.ALL_COMPLETED)
 
-    def create_future_for_signal(self, signum=signal.SIGINT):
-        """
-        Create a future that is set to True when the given signal is received
-        """
-        signal_received = asyncio.Future()
-        # python3.5: signal_received = self.loop.create_future()
-        def _on_signal():
-            self.loop.remove_signal_handler(signum)
-            signal_received.set_result(True)
-        self.loop.add_signal_handler(signum, _on_signal)
-        return signal_received
-
-    @asyncio.coroutine
-    def start_xserver(self):
+    def _create_xserver(self):
         """
         Start the X server and return when it is ready to accept connections
         from X clients
         """
-        # When starting an X server, if the X server sees that SIGUSR1 is
-        # ignored, it sends SIGUSR1 to the parent process when it is ready to
-        # accept connections. We wait until we receive SIGUSR1 before declaring
-        # that the X server has been started.
-
-        server_ready = self.create_future_for_signal(signal.SIGUSR1)
-
-        def _before_xserver():
-            signal.signal(signal.SIGUSR1, signal.SIG_IGN)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
         cmd = (self.xserver_path, "-ac",
                "-geometry", self.desktop_geometry,
                "-desktop", self.desktop_title,
                "-SecurityTypes", "None",
                "-localhost",
                ":{}".format(self.display_number))
-        self.xserver = SimpleProcess("xserver", service={
-            "ExecStart": [cmd],
-        }, preexec_fn=_before_xserver)
-        yield from self.xserver.start()
+        return Xserver(cmd, loop=self.loop)
 
-        # Also monitor for the x server quitting, otherwise in case of an issue
-        # (wrong command line, or display number already in use) we never get
-        # the signal and we wait forever
-        done, pending = yield from asyncio.wait((
-            server_ready,
-            self.xserver.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
-        for p in pending:
-            p.cancel()
-        if self.xserver.proc.returncode is not None:
-            raise Fail("Failed to start the X server")
-
-    @asyncio.coroutine
-    def start_xclient(self):
+    def _create_xclient(self):
         """
         Start the X client
         """
@@ -110,86 +147,34 @@ class RemoteApplication:
         env["DISPLAY"] = ":{}".format(self.display_number)
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
-        self.xclient = SimpleProcess("xclient", service={
+        return SimpleProcess("xclient", service={
             "ExecStart": [self.cmdline],
-        }, preexec_fn=_preexec, env=env)
-        yield from self.xclient.start()
+        }, preexec_fn=_preexec, env=env, loop=self.loop)
 
-    @asyncio.coroutine
-    def start_webserver(self):
+    def _create_websockify(self):
         """
         Start websockify to export the X client connection via a websocket
         server
         """
-        def _preexec():
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
         cmd = ("websockify",
                "--run-once",
                "--web", "/usr/share/novnc/",
                str(self.websocket_listen_port),
                "localhost:{}".format(5900 + self.display_number))
-        self.webserver = SimpleProcess("websocksify", service={
-            "ExecStart": [cmd],
-        }, preexec_fn=_preexec)
-        yield from self.webserver.start()
+        return Websockify(cmd, self.websocket_listen_port, loop=self.loop)
 
     @asyncio.coroutine
-    def wait_for_listen(self, host, port):
-        """
-        Try to connect to a (host, port) until something starts listening on it
-        """
-        sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
-
-        try:
-            while True:
-                try:
-                    yield from self.loop.sock_connect(sock, (host, port))
-                except ConnectionRefusedError:
-                    yield from asyncio.sleep(0.2)
-                else:
-                    return
-        finally:
-            sock.close()
-
-    @asyncio.coroutine
-    def start(self):
-        """
-        Start the X server, X application and websocket proxy, returning when
-        they are all ready and operational
-        """
-        log.info("Starting X server")
-        yield from self.start_xserver()
-
-        log.info("Starting X client")
-        yield from self.start_xclient()
-
-        log.info("Starting web server")
-        yield from self.start_webserver()
-
-        log.info("Waiting for web server to start")
-        yield from self.wait_for_listen("127.0.0.1", self.websocket_listen_port)
-
-    @asyncio.coroutine
-    def wait_and_cleanup(self):
+    def run(self):
         """
         Wait until any one of the X server, X application or websocket proxy
         quits, then make sure all the others quit as well
         """
-
-        log.info("Ready for connections, interrupt with ^C")
-        done, pending = yield from asyncio.wait(
-                (
-                    self.xclient.proc.wait(),
-                    self.xserver.proc.wait(),
-                    self.webserver.proc.wait(),
-                    self.create_future_for_signal(signal.SIGINT),
-                ), return_when=asyncio.FIRST_COMPLETED)
-
-        log.info("Terminating")
-        yield from asyncio.wait((
-            self.xclient.wait_or_terminate(),
-            self.xserver.wait_or_terminate(),
-            self.webserver.wait_or_terminate()), return_when=asyncio.ALL_COMPLETED)
+        pool = ProcessPool(loop=self.loop)
+        pool.set_quit_signal(signal.SIGINT)
+        yield from pool.start_sync(self.xserver)
+        yield from pool.start_sync(self.xclient)
+        yield from pool.start_sync(self.websockify)
+        yield from pool.run()
 
 
 def main():
@@ -232,7 +217,11 @@ def main():
 
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(runner.start())
+        log.debug("Starting processes")
+        task = loop.create_task(runner.run())
+
+        loop.run_until_complete(runner.started)
+        log.info("Ready for connections, interrupt with ^C")
 
         connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=runner.websocket_listen_port)
         log.info("Connect using %s", connect_url)
@@ -252,7 +241,7 @@ def main():
             os.dup2(devnull_fd, 1)
             os.dup2(devnull_fd, 2)
 
-        loop.run_until_complete(runner.wait_and_cleanup())
+        loop.run_until_complete(task)
     finally:
         loop.close()
 
