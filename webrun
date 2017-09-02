@@ -29,6 +29,7 @@ class Xserver(SimpleProcess):
         super().__init__("xserver", service={
             "ExecStart": [cmdline],
         }, preexec_fn=self._before_xserver, loop=loop)
+        self.server_ready = None
 
     def _before_xserver(self):
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
@@ -41,25 +42,13 @@ class Xserver(SimpleProcess):
         # accept connections. We wait until we receive SIGUSR1 before declaring
         # that the X server has been started.
 
-        server_ready = create_future_for_signal(signal.SIGUSR1, loop=self.loop)
-        if not (yield from super()._start()):
-            return False
-        log.debug("%s:X server starting", self.log_tag)
+        self.server_ready = create_future_for_signal(signal.SIGUSR1, loop=self.loop)
+        yield from super()._start()
 
-        # Also monitor for the x server quitting, otherwise in case of an issue
-        # (wrong command line, or display number already in use) we never get
-        # the signal and we wait forever
-        done, pending = yield from asyncio.wait((
-            server_ready,
-            self.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
-        for p in pending:
-            p.cancel()
-        if self.proc.returncode is not None:
-            log.warn("%s:failed to start X server", self.log_tag)
-            return False
-        else:
-            log.debug("%s:X server started", self.log_tag)
-            return True
+    @asyncio.coroutine
+    def _confirm_start(self):
+        yield from super()._confirm_start()
+        yield from self.server_ready
 
 
 class Websockify(SimpleProcess):
@@ -73,9 +62,8 @@ class Websockify(SimpleProcess):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     @asyncio.coroutine
-    def _start(self):
-        if not (yield from super()._start()):
-            return False
+    def _confirm_start(self):
+        yield from super()._confirm_start()
         yield from self._wait_for_listen("127.0.0.1", self.listen_port)
 
     @asyncio.coroutine
