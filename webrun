@@ -170,37 +170,7 @@ class RemoteApplication:
         yield from pool.run()
 
 
-def main():
-    parser = argparse.ArgumentParser(
-            description="start X client on a private X server exported via VNC on the web",
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--verbose", "-v", action="store_true", help="verbose output")
-    parser.add_argument("--debug", action="store_true", help="debug output")
-    parser.add_argument("--geometry", action="store", default=DEFAULT_GEOMETRY, help="X display geometry")
-    parser.add_argument("--display", action="store", type=int, default=DEFAULT_DISPLAY, help="X display number")
-    parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
-    parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
-    parser.add_argument("--open", action="store_true", help="open application in browser")
-    parser.add_argument("--half-daemon", action="store_true", help="setsid, chdir, close file descriptors, but do not fork")
-    parser.add_argument("cmd", nargs="+", help="command and arguments to run")
-
-    args = parser.parse_args()
-
-    log_format = "%(asctime)-15s %(levelname)s %(message)s"
-    level = logging.WARN
-    if args.debug:
-        level = logging.DEBUG
-    elif args.verbose:
-        level = logging.INFO
-    logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
-
-    if args.half_daemon:
-        try:
-            os.setsid()
-        except PermissionError:
-            pass
-        os.chdir("/")
-
+def start_everything(args):
     runner = RemoteApplication(
             cmdline=args.cmd,
             websocket_listen_port=args.port,
@@ -222,21 +192,70 @@ def main():
         print(json.dumps({
             "url": connect_url,
         }))
-        sys.stdout.flush()
+        sys.stdout.close()
 
         if args.open:
             import webbrowser
             webbrowser.open(connect_url)
 
-        if args.half_daemon:
+        if args.daemon or args.half_daemon:
             devnull_fd = os.open("/dev/null", os.O_RDWR)
             os.dup2(devnull_fd, 0)
             os.dup2(devnull_fd, 1)
             os.dup2(devnull_fd, 2)
+            os.umask(0o27)
 
         loop.run_until_complete(task)
     finally:
         loop.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+            description="start X client on a private X server exported via VNC on the web",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--verbose", "-v", action="store_true", help="verbose output")
+    parser.add_argument("--debug", action="store_true", help="debug output")
+    parser.add_argument("--geometry", action="store", default=DEFAULT_GEOMETRY, help="X display geometry")
+    parser.add_argument("--display", action="store", type=int, default=DEFAULT_DISPLAY, help="X display number")
+    parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
+    parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
+    parser.add_argument("--open", action="store_true", help="open application in browser")
+    parser.add_argument("--half-daemon", action="store_true", help="setsid, chdir, close file descriptors, but do not fork")
+    parser.add_argument("--daemon", action="store_true", help="daemonize")
+    parser.add_argument("cmd", nargs="+", help="command and arguments to run")
+
+    args = parser.parse_args()
+
+    log_format = "%(asctime)-15s %(levelname)s %(message)s"
+    level = logging.WARN
+    if args.debug:
+        level = logging.DEBUG
+    elif args.verbose:
+        level = logging.INFO
+    logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
+
+    if args.daemon:
+        fd_r, fd_w = os.pipe()
+        pid = os.fork()
+        if pid != 0:
+            os.dup2(fd_r, 0)
+            os.close(fd_w)
+            # Parent process
+            # Wait for child
+            shutil.copyfileobj(sys.stdin, sys.stdout)
+            return
+        os.dup2(fd_w, 1)
+        os.close(fd_w)
+
+    if args.daemon or args.half_daemon:
+        try:
+            os.setsid()
+        except PermissionError:
+            pass
+        os.chdir("/")
+
+    start_everything(args)
 
 
 if __name__ == "__main__":
