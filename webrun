@@ -42,7 +42,8 @@ class Xserver(SimpleProcess):
         # that the X server has been started.
 
         server_ready = create_future_for_signal(signal.SIGUSR1, loop=self.loop)
-        yield from super()._start()
+        if not (yield from super()._start()):
+            return False
         log.debug("%s:X server starting", self.log_tag)
 
         # Also monitor for the x server quitting, otherwise in case of an issue
@@ -55,8 +56,10 @@ class Xserver(SimpleProcess):
             p.cancel()
         if self.proc.returncode is not None:
             log.warn("%s:failed to start X server", self.log_tag)
+            return False
         else:
             log.debug("%s:X server started", self.log_tag)
+            return True
 
 
 class Websockify(SimpleProcess):
@@ -71,7 +74,8 @@ class Websockify(SimpleProcess):
 
     @asyncio.coroutine
     def _start(self):
-        yield from super()._start()
+        if not (yield from super()._start()):
+            return False
         yield from self._wait_for_listen("127.0.0.1", self.listen_port)
 
     @asyncio.coroutine

@@ -21,7 +21,9 @@ class Process:
         self.unit = unit if unit is not None else {}
         self.service = service if service is not None else {}
         self.log_tag = self.service.get("SyslogIdentifier", name)
+        # Future set to True when the process has started
         self.started = self.loop.create_future()
+        # Future set to the process return code when it quits
         self.returncode = self.loop.create_future()
         self.task = None
 
@@ -31,6 +33,8 @@ class Process:
             yield from self._start()
             if not self.started.cancelled():
                 self.started.set_result(True)
+            else:
+                return
             yield from self.proc.wait()
             log.debug("%s:exited", self.log_tag)
         finally:
@@ -105,6 +109,26 @@ class SimpleProcess(Process):
         self.log_tag += "[{}]".format(self.proc.pid)
         self.stdout_logger = self.loop.create_task(self._log_fd("stdout", self.proc.stdout))
         self.stderr_logger = self.loop.create_task(self._log_fd("stderr", self.proc.stderr))
+
+        done, pending = yield from asyncio.wait((
+            self._confirm_start(),
+            self.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
+        for p in pending:
+            p.cancel()
+
+        if self.proc.returncode is not None:
+            log.warn("%s:failed to start (exited with code %d)", self.log_tag, self.proc.returncode)
+            return False
+        else:
+            log.debug("%s:started", self.log_tag)
+            return True
+
+    @asyncio.coroutine
+    def _confirm_start(self):
+        """
+        Wait until confirmation that the process has successfully started
+        """
+        pass
 
     @asyncio.coroutine
     def _log_fd(self, prefix, fd):
