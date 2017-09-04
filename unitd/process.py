@@ -8,6 +8,38 @@ __ALL__ = ("SimpleProcess", "OneshotProcess")
 
 log = logging.getLogger("unitd.process")
 
+
+class ProcessLogger:
+    def __init__(self, config, loop=None):
+        self.loop = loop if loop is not None else asyncio.get_event_loop()
+        self.base_log_tag = config.service.syslog_identifier
+        self.log_tag = self.base_log_tag
+        self.stdout_logger = None
+        self.stderr_logger = None
+
+    @asyncio.coroutine
+    def _log_fd(self, prefix, fd):
+        while True:
+            line = yield from fd.readline()
+            if not line: break
+            log.debug("%s:%s", self.log_tag, line.decode('utf8').rstrip())
+
+    def get_subprocess_kwargs(self, **kw):
+        kw["stdout"] = asyncio.subprocess.PIPE
+        kw["stderr"] = asyncio.subprocess.PIPE
+        return kw
+
+    def start(self, proc):
+        self.log_tag = self.base_log_tag + "[{}]".format(proc.pid)
+        self.stdout_logger = self.loop.create_task(self._log_fd("stdout", proc.stdout))
+        self.stderr_logger = self.loop.create_task(self._log_fd("stderr", proc.stderr))
+
+    def stop(self):
+        self.stdout_logger.cancel()
+        self.stderr_logger.cancel()
+        self.log_tag = self.base_log_tag
+
+
 class Process:
     """
     [Service]
@@ -23,15 +55,10 @@ class Process:
     WorkingDirectory:
      # ~ is not supported
     """
-    def __init__(self, name, unit=None, service=None, loop=None):
+    def __init__(self, config, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
-        self.name = name
-        self.unit = unit if unit is not None else {}
-        self.service = service if service is not None else {}
-        self.base_log_tag = self.service.get("SyslogIdentifier", name)
-        self.log_tag = self.base_log_tag
-        self.stdout_logger = None
-        self.stderr_logger = None
+        self.config = config
+        self.logger = ProcessLogger(config, self.loop)
         # Future set to True when the process has started
         self.started = self.loop.create_future()
         # Future set to the process return code when it quits
@@ -39,41 +66,44 @@ class Process:
         self.task = None
 
     def _get_subprocess_kwargs(self):
-        res = {}
-        wd = self.service.get("WorkingDirectory", None)
-        if wd is not None:
-            res["cwd"] = wd
-        return res
+        kw = self.config.service.get_subprocess_kwargs(loop=self.loop)
+        kw = self.logger.get_subprocess_kwargs(**kw)
+        return kw
 
     @asyncio.coroutine
-    def _log_fd(self, prefix, fd):
-        while True:
-            line = yield from fd.readline()
-            if not line: break
-            log.debug("%s:%s", self.log_tag, line.decode('utf8').rstrip())
+    def exec_wait(self, cmdline):
+        if isinstance(cmdline, str):
+            cmdline = shlex.split(cmdline)
+        log.debug("%s:starting: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
+
+        kw = self._get_subprocess_kwargs()
+        if self.env is not None:
+            kw["env"] = self.env
+
+        proc = yield from asyncio.create_subprocess_exec(
+            *cmdline,
+            stdin=asyncio.subprocess.DEVNULL,
+            **kw,
+        )
+        self.logger.start(proc)
+
+        yield from proc.wait()
+
+        log.debug("%s:exited with result %d: %s", self.logger.log_tag, proc.returncode, " ".join(shlex.quote(x) for x in cmdline))
+        self.logger.stop()
+
+        return proc.returncode
 
     @asyncio.coroutine
     def _run_exec_start_pre(self):
-        for cmd in self.service.get("ExecStartPre", ()):
-            service = dict(self.service)
-            service.pop("ExecStartPre")
-            service.pop("ExecStartPost")
-            service["ExecStart"] = [cmd]
-            p = OneshotProcess(self.name, service=service, env=self.env, loop=self.loop)
-            yield from p.start()
-            if (yield from p.returncode) != 0:
+        for cmd in self.config.service.exec_start_pre:
+            if (yield from self.exec_wait(cmd)) != 0:
                 break
 
     @asyncio.coroutine
     def _run_exec_start_post(self):
-        for cmd in self.service.get("ExecStartPost", ()):
-            service = dict(self.service)
-            service.pop("ExecStartPre")
-            service.pop("ExecStartPost")
-            service["ExecStart"] = [cmd]
-            p = OneshotProcess(self.name, service=service, env=self.env, loop=self.loop)
-            yield from p.start()
-            if (yield from p.returncode) != 0:
+        for cmd in self.config.service.exec_start_post:
+            if (yield from self.exec_wait(cmd)) != 0:
                 break
 
     @asyncio.coroutine
@@ -87,10 +117,10 @@ class Process:
             else:
                 return
             yield from self.proc.wait()
-            log.debug("%s:exited", self.log_tag)
+            log.debug("%s:exited", self.logger.log_tag)
         finally:
             if self.task.cancelled():
-                log.debug("%s:cancelled", self.log_tag)
+                log.debug("%s:cancelled", self.logger.log_tag)
             yield from self._wait_or_terminate()
 
     @asyncio.coroutine
@@ -104,14 +134,13 @@ class Process:
             except asyncio.TimeoutError:
                 pass
             else:
-                log.debug("%s:exited with result %d", self.log_tag, self.proc.returncode)
-                self.stdout_logger.cancel()
-                self.stderr_logger.cancel()
+                log.debug("%s:exited with result %d", self.logger.log_tag, self.proc.returncode)
+                self.logger.stop()
                 if not self.returncode.cancelled():
                     self.returncode.set_result(result)
                 return
 
-            log.debug("%s:terminating", self.log_tag)
+            log.debug("%s:terminating", self.logger.log_tag)
             self.proc.terminate()
 
     def start(self):
@@ -130,8 +159,8 @@ class Process:
 
 
 class OneshotProcess(Process):
-    def __init__(self, name, unit=None, service=None, preexec_fn=None, env=None, loop=None):
-        super().__init__(name, unit, service, loop=loop)
+    def __init__(self, config, preexec_fn=None, env=None, loop=None):
+        super().__init__(config, loop=loop)
         self.proc = None
         self.preexec_fn = preexec_fn
         self.env = env
@@ -141,10 +170,11 @@ class OneshotProcess(Process):
         """
         Start execution of the command, and logging of its stdout and stderr
         """
-        for cmdline in self.service.get("ExecStart", ()):
+        for cmdline in self.config.service.exec_start:
+            # TODO: this starts in parallel, but oneshot should start serially
             if isinstance(cmdline, str):
                 cmdline = shlex.split(cmdline)
-            log.debug("%s:cmdline: %s", self.log_tag, " ".join(shlex.quote(x) for x in cmdline))
+            log.debug("%s:cmdline: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
 
             kw = self._get_subprocess_kwargs()
             if self.env is not None:
@@ -153,16 +183,10 @@ class OneshotProcess(Process):
             self.proc = yield from asyncio.create_subprocess_exec(
                 *cmdline,
                 stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                loop=self.loop,
                 **kw,
             )
-            self.log_tag = self.base_log_tag + "[{}]".format(self.proc.pid)
-            self.stdout_logger = self.loop.create_task(self._log_fd("stdout", self.proc.stdout))
-            self.stderr_logger = self.loop.create_task(self._log_fd("stderr", self.proc.stderr))
-
-            return True
+            self.logger.start(self.proc)
+        return True
 
 
 class SimpleProcess(Process):
@@ -170,8 +194,8 @@ class SimpleProcess(Process):
     Run a command, track its execution, log its standard output and standard
     error
     """
-    def __init__(self, name, unit=None, service=None, preexec_fn=None, env=None, loop=None):
-        super().__init__(name, unit, service, loop=loop)
+    def __init__(self, config, preexec_fn=None, env=None, loop=None):
+        super().__init__(config, loop=loop)
         self.proc = None
         self.preexec_fn = preexec_fn
         self.env = env
@@ -182,10 +206,9 @@ class SimpleProcess(Process):
         os.setpgrp()
 
     def _get_cmdline(self):
-        cmdline = self.service["ExecStart"]
-        if len(cmdline) != 1:
+        if len(self.config.service.exec_start) != 1:
             raise RuntimeError("ExecStart should only have one entry for simple processes")
-        cmdline = cmdline[0]
+        cmdline = self.config.service.exec_start[0]
         if isinstance(cmdline, str):
             return shlex.split(cmdline)
         return cmdline
@@ -196,7 +219,7 @@ class SimpleProcess(Process):
         Start execution of the command, and logging of its stdout and stderr
         """
         cmdline = self._get_cmdline()
-        log.debug("%s:cmdline: %s", self.log_tag, " ".join(shlex.quote(x) for x in cmdline))
+        log.debug("%s:cmdline: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
 
         kw = self._get_subprocess_kwargs()
         if self.env is not None:
@@ -207,14 +230,9 @@ class SimpleProcess(Process):
         self.proc = yield from asyncio.create_subprocess_exec(
             *cmdline, preexec_fn=self._preexec,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            loop=self.loop,
             **kw,
         )
-        self.log_tag = self.base_log_tag + "[{}]".format(self.proc.pid)
-        self.stdout_logger = self.loop.create_task(self._log_fd("stdout", self.proc.stdout))
-        self.stderr_logger = self.loop.create_task(self._log_fd("stderr", self.proc.stderr))
+        self.logger.start(self.proc)
 
         done, pending = yield from asyncio.wait((
             self._confirm_start(),
@@ -223,10 +241,10 @@ class SimpleProcess(Process):
             p.cancel()
 
         if self.proc.returncode is not None:
-            log.warn("%s:failed to start (exited with code %d)", self.log_tag, self.proc.returncode)
+            log.warn("%s:failed to start (exited with code %d)", self.logger.log_tag, self.proc.returncode)
             return False
         else:
-            log.debug("%s:started", self.log_tag)
+            log.debug("%s:started", self.logger.log_tag)
             return True
 
     @asyncio.coroutine

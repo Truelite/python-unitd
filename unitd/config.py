@@ -1,4 +1,7 @@
 import re
+import logging
+
+log = logging.getLogger("unitd.config")
 
 class ParseError(RuntimeError):
     def __init__(self, fd, lineno, msg):
@@ -34,3 +37,60 @@ def parse(fd):
             continue
 
         raise ParseError(fd, lineno, "line not recognised as comment, [section] or assignment")
+
+
+class Unit:
+    def __init__(self):
+        pass
+
+    def from_config(self, key, val):
+        pass
+
+
+class Service:
+    def __init__(self):
+        self.syslog_identifier = None
+        self.working_directory = None
+        self.exec_start = []
+        self.exec_start_pre = []
+        self.exec_start_post = []
+
+    def get_subprocess_kwargs(self, **kw):
+        if self.working_directory is not None:
+            kw["cwd"] = self.working_directory
+        return kw
+
+    def from_config(self, key, val):
+        if key == "SyslogIdentifier":
+            self.syslog_identifier = val
+        elif key == "WorkingDirectory":
+            self.working_directory = val
+        elif key == "ExecStart":
+            self.exec_start.append(val)
+        elif key == "ExecStartPre":
+            self.exec_start_pre.append(val)
+        elif key == "ExecStartPost":
+            self.exec_start_post.append(val)
+
+
+class Config:
+    def __init__(self):
+        self.unit = Unit()
+        self.service = Service()
+
+    @classmethod
+    def read_file(cls, pathname):
+        """
+        Read a unit file from the given pathname, returning the parsed
+        Config
+        """
+        res = cls()
+
+        with open(pathname, "rt") as fd:
+            for section, key, val in parse(fd):
+                if section == "service":
+                    res.service.from_config(key, val)
+                elif section == "unit":
+                    res.unit.from_config(key, val)
+
+        return res
