@@ -73,10 +73,20 @@ class Service:
             self.exec_start_post.append(val)
 
 
+class Webrun:
+    def __init__(self):
+        self.display_geometry = "800x600"
+
+    def from_config(self, key, val):
+        if key == "DisplayGeometry":
+            self.display_geometry = val
+
+
 class Config:
     def __init__(self):
         self.unit = Unit()
         self.service = Service()
+        self.webrun = Webrun()
 
     @classmethod
     def read_file(cls, pathname):
@@ -93,5 +103,7 @@ class Config:
                     res.service.from_config(key, val)
                 elif section == "unit":
                     res.unit.from_config(key, val)
+                elif section == "webrun":
+                    res.webrun.from_config(key, val)
 
         return res
