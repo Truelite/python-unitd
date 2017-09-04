@@ -88,6 +88,7 @@ class Config:
 
         with open(pathname, "rt") as fd:
             for section, key, val in parse(fd):
+                section = section.lower()
                 if section == "service":
                     res.service.from_config(key, val)
                 elif section == "unit":
