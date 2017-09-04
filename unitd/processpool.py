@@ -16,12 +16,12 @@ class ProcessPool:
 
     @asyncio.coroutine
     def start_sync(self, process):
-        log.debug("Starting process %s synchronously", process.name)
+        log.debug("Starting process %s synchronously", process.logger.log_tag)
         self.tasks.append(process.start())
         yield from process.started
 
     def start_async(self, process):
-        log.debug("Starting process %s ssynchronously", process.name)
+        log.debug("Starting process %s ssynchronously", process.logger.log_tag)
         self.tasks.append(process.start())
 
     @asyncio.coroutine

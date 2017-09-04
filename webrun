@@ -144,8 +144,8 @@ class RemoteApplication:
         env["DISPLAY"] = ":{}".format(self.display_number)
         def _preexec():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
-        if config.service.syslog_identifier is None:
-            config.service.syslog_identifier = "xclient"
+        if self.config.service.syslog_identifier is None:
+            self.config.service.syslog_identifier = "xclient"
         return SimpleProcess(self.config, preexec_fn=_preexec, env=env, loop=self.loop)
 
     def _create_websockify(self):
@@ -280,3 +280,5 @@ if __name__ == "__main__":
     except Fail as e:
         print(e, file=sys.stderr)
         sys.exit(1)
+    except:
+        log.exception("uncaught exception")
