@@ -216,6 +216,7 @@ def main():
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--verbose", "-v", action="store_true", help="verbose output")
     parser.add_argument("--debug", action="store_true", help="debug output")
+    parser.add_argument("--logfile", action="store", help="lot to the given file")
     parser.add_argument("--geometry", action="store", default=DEFAULT_GEOMETRY, help="X display geometry")
     parser.add_argument("--display", action="store", type=int, default=DEFAULT_DISPLAY, help="X display number")
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
@@ -232,7 +233,10 @@ def main():
         level = logging.DEBUG
     elif args.verbose:
         level = logging.INFO
-    logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
+    if args.logfile:
+        logging.basicConfig(level=level, filename=args.logfile, format=log_format)
+    else:
+        logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
 
     if args.daemon:
         fd_r, fd_w = os.pipe()
