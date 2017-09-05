@@ -10,6 +10,9 @@ log = logging.getLogger("unitd.process")
 
 
 class ProcessLogger:
+    """
+    Handle logging of stdout and stderr from a running process
+    """
     def __init__(self, config, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.base_log_tag = config.service.syslog_identifier
@@ -25,16 +28,26 @@ class ProcessLogger:
             log.debug("%s:%s", self.log_tag, line.decode('utf8').rstrip())
 
     def get_subprocess_kwargs(self, **kw):
+        """
+        Hook used when constructing arguments for
+        asyncio.create_subprocess_exec
+        """
         kw["stdout"] = asyncio.subprocess.PIPE
         kw["stderr"] = asyncio.subprocess.PIPE
         return kw
 
     def start(self, proc):
+        """
+        Start the logging tasks for the given process
+        """
         self.log_tag = self.base_log_tag + "[{}]".format(proc.pid)
         self.stdout_logger = self.loop.create_task(self._log_fd("stdout", proc.stdout))
         self.stderr_logger = self.loop.create_task(self._log_fd("stderr", proc.stderr))
 
     def stop(self):
+        """
+        Stop the logging tasks
+        """
         self.stdout_logger.cancel()
         self.stderr_logger.cancel()
         self.log_tag = self.base_log_tag
@@ -66,12 +79,21 @@ class Process:
         self.task = None
 
     def _get_subprocess_kwargs(self):
+        """
+        Hook used when constructing arguments for
+        asyncio.create_subprocess_exec
+        """
         kw = self.config.service.get_subprocess_kwargs(loop=self.loop)
         kw = self.logger.get_subprocess_kwargs(**kw)
         return kw
 
     @asyncio.coroutine
     def exec_wait(self, cmdline):
+        """
+        Run the given command line and wait for its completion.
+
+        stdout and stderr are logged with self.logger
+        """
         if isinstance(cmdline, str):
             cmdline = shlex.split(cmdline)
         log.debug("%s:starting: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
@@ -95,24 +117,21 @@ class Process:
         return proc.returncode
 
     @asyncio.coroutine
-    def _run_exec_start_pre(self):
-        for cmd in self.config.service.exec_start_pre:
-            if (yield from self.exec_wait(cmd)) != 0:
-                break
-
-    @asyncio.coroutine
-    def _run_exec_start_post(self):
-        for cmd in self.config.service.exec_start_post:
+    def _run_sync_commands(self, commands):
+        """
+        Run commands from the `commands` list, stopping at the first that fails
+        """
+        for cmd in commands:
             if (yield from self.exec_wait(cmd)) != 0:
                 break
 
     @asyncio.coroutine
     def _run_coroutine(self):
         try:
-            yield from self._run_exec_start_pre()
+            yield from self._run_sync_commands(self.config.service.exec_start_pre)
             yield from self._start()
             if not self.started.cancelled():
-                yield from self._run_exec_start_post()
+                yield from self._run_sync_commands(self.config.service.exec_start_post)
                 self.started.set_result(True)
             else:
                 return

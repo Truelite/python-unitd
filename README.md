@@ -28,3 +28,35 @@ Web page for viewer:
 
 The source parsing the URL arguments is at `/usr/share/novnc/include/ui.js:36`
 
+
+# `.service` files
+
+`.service` files implement a subset of systemd's unit files. All sections and
+configurations that are not supported are silently ignored.
+
+
+## `[Unit]` section
+
+Currently ignored
+
+
+## `[Service]` section
+
+These configurations are supported the same as in systemd:
+
+* `SyslogIdentifier`
+
+These configurations are partially supported:
+
+* `ExecStart`: prefixes `@`, `-`, `+` are not supported
+* `ExecStartPre`, `ExecStartPost`: prefix `-` is not supported
+* `WorkingDirectory`: value `~` is not supported
+
+
+## `[Webrun]` section
+
+The `Webrun` section contains configuration directives that are specific to
+webrun:
+
+* `DisplayGeometry` (default: `800x600`): geometry of the X display where the
+  application is run
