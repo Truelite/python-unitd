@@ -68,3 +68,4 @@ webrun:
 
 * `DisplayGeometry` (default: `800x600`): geometry of the X display where the
   application is run
+* `WebPort` (default: 6080): port used for the http server / websocket server

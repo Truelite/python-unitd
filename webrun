@@ -216,15 +216,14 @@ def start_everything(config, args):
 
 def main():
     parser = argparse.ArgumentParser(
-            description="start X client on a private X server exported via VNC on the web",
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+            description="start X client on a private X server exported via VNC on the web")
     parser.add_argument("--verbose", "-v", action="store_true", help="verbose output")
     parser.add_argument("--debug", action="store_true", help="debug output")
     parser.add_argument("--logfile", action="store", help="lot to the given file")
     parser.add_argument("--geometry", action="store", help="X display geometry")
     parser.add_argument("--display", action="store", type=int, default=DEFAULT_DISPLAY, help="X display number")
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
-    parser.add_argument("--port", action="store", type=int, default=6080, help="websocket server port")
+    parser.add_argument("--port", action="store", type=int, default=None, help="websocket server port, default: 6080")
     parser.add_argument("--open", action="store_true", help="open application in browser")
     parser.add_argument("--daemon", action="store_true", help="daemonize")
     parser.add_argument("--service", action="store_true", help="argument is a .service file rather than a command line")
@@ -250,8 +249,11 @@ def main():
     else:
         config = unitd.config.Config()
         config.service.exec_start.append(args.cmd)
-        if args.geometry is not None:
-            config.webrun.display_geometry = args.geometry
+
+    if args.geometry is not None:
+        config.webrun.display_geometry = args.geometry
+    if args.port is not None:
+        config.webrun.web_port = args.port
 
     if args.daemon:
         fd_r, fd_w = os.pipe()

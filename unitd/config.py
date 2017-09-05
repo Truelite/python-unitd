@@ -56,6 +56,12 @@ class Parser:
         else:
             self.parse_error("invalid bool value: `{}`".format(s))
 
+    def parse_int(self, s):
+        try:
+            return int(s)
+        except ValueError:
+            self.parse_error("invalid integer value: `{}`".format(s))
+
     def parse_signal(self, s):
         if re.match("^[A-Z]+^", s):
             signum = getattr(signal, s, None)
@@ -72,7 +78,7 @@ class Parser:
         if s == "infinity":
             return None
         if s.isdigit():
-            return int(s)
+            return self.parse_int(s)
         re_delay = re.compile("^(?:(?P<min>\d+)min|(?P<sec>\d+)sec)$")
         res = 0
         for delay in s.split():
@@ -146,10 +152,13 @@ class Service:
 class Webrun:
     def __init__(self):
         self.display_geometry = "800x600"
+        self.web_port = 6080
 
     def from_config(self, parser, key, val):
         if key == "DisplayGeometry":
             self.display_geometry = val
+        elif key == "WebPort":
+            self.web_port = parser.parse_int(val)
 
 
 class Config:
@@ -168,7 +177,7 @@ class Config:
 
         with open(pathname, "rt") as fd:
             parser = Parser(fd)
-            for section, key, val in parser.parse(fd):
+            for section, key, val in parser.parse():
                 section = section.lower()
                 if section == "service":
                     res.service.from_config(parser, key, val)
