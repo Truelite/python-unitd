@@ -1,20 +1,20 @@
 import unittest
 import textwrap
 import io
-from unitd.config import parse, ParseError
+from unitd.config import Parser, ParseError
 
 def test_input(s):
     return io.StringIO(textwrap.dedent(s.lstrip("\n")))
 
 def test_parse(s):
-    return list(parse(test_input(s)))
+    return list(Parser(test_input(s)).parse())
 
 
 class TestParser(unittest.TestCase):
     def test_parse(self):
-        self.assertEqual(list(parse(io.StringIO(""))), [])
-        self.assertEqual(list(parse(io.StringIO("\n\n"))), [])
-        self.assertEqual(list(parse(io.StringIO("\n#comment\n"))), [])
+        self.assertEqual(test_parse(""), [])
+        self.assertEqual(test_parse("\n\n"), [])
+        self.assertEqual(test_parse("\n#comment\n"), [])
 
         with self.assertRaises(ParseError):
             test_parse("a=1")

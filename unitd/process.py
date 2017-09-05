@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import sys
 import os
 import shlex
@@ -197,9 +198,50 @@ class Process:
         """
         Stop the process
         """
-        # TODO: ExecStop, ExecStopPost, terminate signals, Kill* configs
-        yield from self._wait_or_terminate()
+        if self.started.done() and self.started.result():
+            yield from self._run_sync_commands(self.config.service.exec_stop)
+        yield from self._kill()
+        yield from self._run_sync_commands(self.config.service.exec_stop_post)
         self.stopped.set_result(True)
+
+    @asyncio.coroutine
+    def _kill(self):
+        """
+        Kill the program
+        """
+        if not self.started.done():
+            raise RuntimeError("{}:_kill called on a process that has not been started yet".format(self.logger.log_tag))
+
+        try:
+            if self.terminated.done():
+                return
+
+            if self.config.service.kill_mode == "none":
+                return
+
+            log.debug("%s:sending %d signal", self.logger.log_tag, self.config.service.kill_signal)
+            self.proc.send_signal(self.config.service.kill_signal)
+
+            try:
+                result = yield from asyncio.wait_for(self.proc.wait(), self.config.service.timeout_stop_sec, loop=self.loop)
+            except asyncio.TimeoutError:
+                result = None
+
+            if result is None and self.config.service.send_sigkill:
+                log.debug("%s:sending %d signal", self.logger.log_tag, signal.SIGKILL)
+                self.proc.send_signal(signal.SIGKILL)
+
+                try:
+                    result = yield from asyncio.wait_for(self.proc.wait(), self.config.service.timeout_stop_sec, loop=self.loop)
+                except asyncio.TimeoutError:
+                    result = None
+
+                if result is None:
+                    log.debug("%s:did not respond to SIGKILL: giving up", self.logger.log_tag)
+                else:
+                    log.debug("%s:exited with result code %d", self.logger.log_tag, result)
+        finally:
+            self.logger.stop()
 
 
 class OneshotProcess(Process):
@@ -277,30 +319,3 @@ class SimpleProcess(Process):
         Wait until confirmation that the process has successfully started
         """
         pass
-
-    @asyncio.coroutine
-    def _wait_or_terminate(self, wait_time=1):
-        """
-        Wait for the program to quit, calling terminate() on it if it does not
-        """
-        if not self.started.done():
-            raise RuntimeError("{}:_wait_or_terminate called on a process that has not been started yet".format(self.logger.log_tag))
-
-        try:
-            if self.terminated.done():
-                return
-
-            while True:
-                try:
-                    result = yield from asyncio.wait_for(self.proc.wait(), wait_time, loop=self.loop)
-                except asyncio.TimeoutError:
-                    pass
-                else:
-                    log.debug("%s:exited with result %d", self.logger.log_tag, self.proc.returncode)
-                    return
-
-                log.debug("%s:terminating", self.logger.log_tag)
-                self.proc.terminate()
-        finally:
-            self.logger.stop()
-
