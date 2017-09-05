@@ -59,6 +59,8 @@ class TestProcess(AsyncTestCase):
         config = unitd.config.Config()
         config.service.syslog_identifier = "test"
         config.service.exec_start_pre.append(["mkdir", "one"])
+        config.service.exec_start_pre.append("-/bin/false")
+        config.service.exec_start_pre.append(["-/bin/false"])
         config.service.exec_start_pre.append(["mkdir", "two"])
         config.service.exec_start.append(["/bin/sleep", "3600"])
         config.service.exec_start_post.append(["mkdir", "three"])

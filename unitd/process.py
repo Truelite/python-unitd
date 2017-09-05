@@ -55,18 +55,7 @@ class ProcessLogger:
 
 class Process:
     """
-    [Service]
-    SyslogIdentifier: string
-    ExecStart: [ strings|arg sequence ]
-     # @ prefix is not supported
-     # - prefix is not supported
-     # + prefix is not supported
-    ExecStartPre: [ strings|arg sequence ]
-     # - prefix is not supported
-    ExecStartPost: [ strings|arg sequence ]
-     # - prefix is not supported
-    WorkingDirectory:
-     # ~ is not supported
+    Base class for processes managed by unitd
     """
     def __init__(self, config, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
@@ -94,8 +83,16 @@ class Process:
 
         stdout and stderr are logged with self.logger
         """
+        ignore_nonzero_result = False
         if isinstance(cmdline, str):
+            if cmdline[0] == "-":
+                ignore_nonzero_result = True
+                cmdline = cmdline[1:]
             cmdline = shlex.split(cmdline)
+        elif cmdline[0][0] == "-":
+            ignore_nonzero_result = True
+            cmdline[0] = cmdline[0][1:]
+
         log.debug("%s:starting: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
 
         kw = self._get_subprocess_kwargs()
@@ -114,7 +111,9 @@ class Process:
         log.debug("%s:exited with result %d: %s", self.logger.log_tag, proc.returncode, " ".join(shlex.quote(x) for x in cmdline))
         self.logger.stop()
 
-        return proc.returncode
+        if ignore_nonzero_result:
+            return True
+        return proc.returncode == 0
 
     @asyncio.coroutine
     def _run_sync_commands(self, commands):
@@ -122,7 +121,7 @@ class Process:
         Run commands from the `commands` list, stopping at the first that fails
         """
         for cmd in commands:
-            if (yield from self.exec_wait(cmd)) != 0:
+            if not (yield from self.exec_wait(cmd)):
                 break
 
     @asyncio.coroutine

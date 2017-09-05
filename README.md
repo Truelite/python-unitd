@@ -45,11 +45,12 @@ Currently ignored
 These configurations are supported the same as in systemd:
 
 * `SyslogIdentifier`
+* `ExecStartPre`
+* `ExecStartPost`
 
 These configurations are partially supported:
 
 * `ExecStart`: prefixes `@`, `-`, `+` are not supported
-* `ExecStartPre`, `ExecStartPost`: prefix `-` is not supported
 * `WorkingDirectory`: value `~` is not supported
 
 
