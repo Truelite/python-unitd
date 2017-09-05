@@ -57,24 +57,60 @@ class Process:
     """
     Base class for processes managed by unitd
     """
-    def __init__(self, config, loop=None):
+    def __init__(self, config, env=None, preexec_fn=None, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config = config
+        self.preexec_fn = preexec_fn
+        self.env = env
         self.logger = ProcessLogger(config, self.loop)
-        # Future set to True when the process has started
+        self._last_exit_code = None
+        # Set to True when start succeeds, False when start fails
         self.started = self.loop.create_future()
-        # Future set to the process return code when it quits
-        self.returncode = self.loop.create_future()
-        self.task = None
+        # Future set to the process exit code when it exits
+        self.terminated = None
+        # Set to True when stop succeeds
+        self.stopped = self.loop.create_future()
+
+    def _preexec(self):
+        """
+        Hook passed as preexec_fn to the child process
+        """
+        if self.preexec_fn:
+            self.preexec_fn()
 
     def _get_subprocess_kwargs(self):
         """
         Hook used when constructing arguments for
         asyncio.create_subprocess_exec
         """
-        kw = self.config.service.get_subprocess_kwargs(loop=self.loop)
+        kw = self.config.service.get_subprocess_kwargs(loop=self.loop, preexec_fn=self._preexec)
         kw = self.logger.get_subprocess_kwargs(**kw)
+        if self.env is not None:
+            kw["env"] = self.env
         return kw
+
+    def _parse_cmdline(self, cmdline, flags=""):
+        """
+        Turn cmdline into a list of command line arguments.
+
+        If cmdline is already a list, it is preserved as is.
+
+        If flags is not empty, leading characters from flags in cmdline (or in
+        the first element of cmdline if it is a list) are stripped, and
+        returned separately.
+
+        Returns (cmdline:list, flags:str)
+        """
+        if isinstance(cmdline, str):
+            cmdline = shlex.split(cmdline)
+
+        stripped = cmdline[0].lstrip(flags)
+        if stripped == cmdline[0]:
+            return cmdline, ""
+        else:
+            _flags = cmdline[0][:len(stripped)]
+            cmdline[0] = stripped
+            return cmdline, _flags
 
     @asyncio.coroutine
     def exec_wait(self, cmdline):
@@ -83,22 +119,11 @@ class Process:
 
         stdout and stderr are logged with self.logger
         """
-        ignore_nonzero_result = False
-        if isinstance(cmdline, str):
-            if cmdline[0] == "-":
-                ignore_nonzero_result = True
-                cmdline = cmdline[1:]
-            cmdline = shlex.split(cmdline)
-        elif cmdline[0][0] == "-":
-            ignore_nonzero_result = True
-            cmdline[0] = cmdline[0][1:]
+        cmdline, flags = self._parse_cmdline(cmdline, "-")
 
         log.debug("%s:starting: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
 
         kw = self._get_subprocess_kwargs()
-        if self.env is not None:
-            kw["env"] = self.env
-
         proc = yield from asyncio.create_subprocess_exec(
             *cmdline,
             stdin=asyncio.subprocess.DEVNULL,
@@ -106,12 +131,12 @@ class Process:
         )
         self.logger.start(proc)
 
-        yield from proc.wait()
+        self._last_exit_code = yield from proc.wait()
 
         log.debug("%s:exited with result %d: %s", self.logger.log_tag, proc.returncode, " ".join(shlex.quote(x) for x in cmdline))
         self.logger.stop()
 
-        if ignore_nonzero_result:
+        if "-" in flags:
             return True
         return proc.returncode == 0
 
@@ -122,89 +147,80 @@ class Process:
         """
         for cmd in commands:
             if not (yield from self.exec_wait(cmd)):
-                break
+                return False
+        return True
 
     @asyncio.coroutine
-    def _run_coroutine(self):
-        try:
-            yield from self._run_sync_commands(self.config.service.exec_start_pre)
-            yield from self._start()
-            if not self.started.cancelled():
-                yield from self._run_sync_commands(self.config.service.exec_start_post)
-                self.started.set_result(True)
-            else:
-                return
-            yield from self.proc.wait()
-            log.debug("%s:exited", self.logger.log_tag)
-        finally:
-            if self.task.cancelled():
-                log.debug("%s:cancelled", self.logger.log_tag)
-            yield from self._wait_or_terminate()
+#    def _run_coroutine(self):
+#        try:
+#            yield from self._start()
+#            if not self.started.cancelled():
+#                yield from self._run_sync_commands(self.config.service.exec_start_post)
+#                self.started.set_result(True)
+#            else:
+#                return
+#            yield from self.proc.wait()
+#            log.debug("%s:exited", self.logger.log_tag)
+#        finally:
+#            if self.task.cancelled():
+#                log.debug("%s:cancelled", self.logger.log_tag)
+#            yield from self._wait_or_terminate()
 
     @asyncio.coroutine
-    def _wait_or_terminate(self, wait_time=1):
-        """
-        Wait for the program to quit, calling terminate() on it if it does not
-        """
-        while True:
-            try:
-                result = yield from asyncio.wait_for(self.proc.wait(), wait_time, loop=self.loop)
-            except asyncio.TimeoutError:
-                pass
-            else:
-                log.debug("%s:exited with result %d", self.logger.log_tag, self.proc.returncode)
-                self.logger.stop()
-                if not self.returncode.cancelled():
-                    self.returncode.set_result(result)
-                return
-
-            log.debug("%s:terminating", self.logger.log_tag)
-            self.proc.terminate()
-
     def start(self):
         """
-        Create and schedule a task that starts the process and waits for its
-        completion.
+        Start the process.
 
-        If the task gets canceled, it will still make sure the underlying
-        process gets killed.
-
-        If the process has already been started, returns the existing task
+        Return True if the process was started successfully, False if something
+        failed.
         """
-        if self.task is None:
-            self.task = self.loop.create_task(self._run_coroutine())
-        return self.task
+        if not (yield from self._run_sync_commands(self.config.service.exec_start_pre)):
+            self.started.set_result(False)
+            return False
+        log.debug("%s:exec_start_pre succeeded", self.logger.log_tag)
+
+        if not (yield from self._start()):
+            self.started.set_result(False)
+            return False
+        log.debug("%s:exec_start succeeded", self.logger.log_tag)
+
+        if not (yield from self._run_sync_commands(self.config.service.exec_start_post)):
+            self.started.set_result(False)
+            return False
+        log.debug("%s:exec_start_post succeeded", self.logger.log_tag)
+
+        self.started.set_result(True)
+        return True
+
+    @asyncio.coroutine
+    def stop(self):
+        """
+        Stop the process
+        """
+        # TODO: ExecStop, ExecStopPost, terminate signals, Kill* configs
+        yield from self._wait_or_terminate()
+        self.stopped.set_result(True)
 
 
 class OneshotProcess(Process):
-    def __init__(self, config, preexec_fn=None, env=None, loop=None):
-        super().__init__(config, loop=loop)
-        self.proc = None
-        self.preexec_fn = preexec_fn
-        self.env = env
-
     @asyncio.coroutine
     def _start(self):
         """
         Start execution of the command, and logging of its stdout and stderr
         """
-        for cmdline in self.config.service.exec_start:
-            # TODO: this starts in parallel, but oneshot should start serially
-            if isinstance(cmdline, str):
-                cmdline = shlex.split(cmdline)
-            log.debug("%s:cmdline: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
+        self.terminated = self.loop.create_future()
 
-            kw = self._get_subprocess_kwargs()
-            if self.env is not None:
-                kw["env"] = self.env
+        try:
+            if not (yield from self._run_sync_commands(self.config.service.exec_start)):
+                return False
 
-            self.proc = yield from asyncio.create_subprocess_exec(
-                *cmdline,
-                stdin=asyncio.subprocess.DEVNULL,
-                **kw,
-            )
-            self.logger.start(self.proc)
-        return True
+            return True
+        finally:
+            self.terminated.set_result(self._last_exit_code)
+
+    @asyncio.coroutine
+    def _wait_or_terminate(self, wait_time=1):
+        pass
 
 
 class SimpleProcess(Process):
@@ -212,58 +228,48 @@ class SimpleProcess(Process):
     Run a command, track its execution, log its standard output and standard
     error
     """
-    def __init__(self, config, preexec_fn=None, env=None, loop=None):
-        super().__init__(config, loop=loop)
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
         self.proc = None
-        self.preexec_fn = preexec_fn
-        self.env = env
-
-    def _preexec(self):
-        if self.preexec_fn:
-            self.preexec_fn()
-        os.setpgrp()
-
-    def _get_cmdline(self):
         if len(self.config.service.exec_start) != 1:
             raise RuntimeError("ExecStart should only have one entry for simple processes")
-        cmdline = self.config.service.exec_start[0]
-        if isinstance(cmdline, str):
-            return shlex.split(cmdline)
-        return cmdline
+        self.cmdline, self.flags = self._parse_cmdline(self.config.service.exec_start[0], "-+@")
+
+    def _preexec(self):
+        super()._preexec()
+        os.setpgrp()
 
     @asyncio.coroutine
     def _start(self):
         """
         Start execution of the command, and logging of its stdout and stderr
         """
-        cmdline = self._get_cmdline()
-        log.debug("%s:cmdline: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in cmdline))
+        log.debug("%s:cmdline: %s", self.logger.log_tag, " ".join(shlex.quote(x) for x in self.cmdline))
 
         kw = self._get_subprocess_kwargs()
-        if self.env is not None:
-            kw["env"] = self.env
 
-        # TODO: in the future, stdin could be connected to webrun's stdin, so
-        # that one can pipe output to an X client exported to a web page
         self.proc = yield from asyncio.create_subprocess_exec(
-            *cmdline, preexec_fn=self._preexec,
-            stdin=asyncio.subprocess.DEVNULL,
-            **kw,
+            *self.cmdline, stdin=asyncio.subprocess.DEVNULL, **kw,
         )
         self.logger.start(self.proc)
 
+        # Run self._confirm_start to give subclassers a way to detect when the
+        # startup is done, like polling on a tcp port, or waiting for a signal
         done, pending = yield from asyncio.wait((
             self._confirm_start(),
             self.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
         for p in pending:
             p.cancel()
 
-        if self.proc.returncode is not None:
-            log.warn("%s:failed to start (exited with code %d)", self.logger.log_tag, self.proc.returncode)
-            return False
-        else:
-            log.debug("%s:started", self.logger.log_tag)
-            return True
+        try:
+            if self.proc.returncode is not None:
+                log.warn("%s:failed to start (exited with code %d)", self.logger.log_tag, self.proc.returncode)
+                return False
+            else:
+                log.debug("%s:started", self.logger.log_tag)
+                return True
+        finally:
+            self.terminated = self.loop.create_task(self.proc.wait())
 
     @asyncio.coroutine
     def _confirm_start(self):
@@ -271,3 +277,30 @@ class SimpleProcess(Process):
         Wait until confirmation that the process has successfully started
         """
         pass
+
+    @asyncio.coroutine
+    def _wait_or_terminate(self, wait_time=1):
+        """
+        Wait for the program to quit, calling terminate() on it if it does not
+        """
+        if not self.started.done():
+            raise RuntimeError("{}:_wait_or_terminate called on a process that has not been started yet".format(self.logger.log_tag))
+
+        try:
+            if self.terminated.done():
+                return
+
+            while True:
+                try:
+                    result = yield from asyncio.wait_for(self.proc.wait(), wait_time, loop=self.loop)
+                except asyncio.TimeoutError:
+                    pass
+                else:
+                    log.debug("%s:exited with result %d", self.logger.log_tag, self.proc.returncode)
+                    return
+
+                log.debug("%s:terminating", self.logger.log_tag)
+                self.proc.terminate()
+        finally:
+            self.logger.stop()
+

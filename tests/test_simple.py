@@ -14,10 +14,10 @@ class TestProcess(AsyncTestCase):
         config.service.syslog_identifier = "test"
         config.service.exec_start.append(["/bin/true"])
         proc = SimpleProcess(config, loop=self.loop)
-        proc.start()
-        yield from proc.started
-        yield from proc.proc.wait()
-        self.assertEqual((yield from proc.returncode), 0)
+        yield from proc.start()
+        yield from proc.terminated
+        yield from proc.stop()
+        self.assertEqual((yield from proc.terminated), 0)
 
     @async_test
     def test_oneshot(self):
@@ -26,7 +26,9 @@ class TestProcess(AsyncTestCase):
         config.service.exec_start.append(["/bin/true"])
         proc = OneshotProcess(config, loop=self.loop)
         yield from proc.start()
-        self.assertEqual((yield from proc.returncode), 0)
+        yield from proc.terminated
+        yield from proc.stop()
+        self.assertEqual((yield from proc.terminated), 0)
 
     @async_test
     def test_simple(self):
@@ -34,25 +36,9 @@ class TestProcess(AsyncTestCase):
         config.service.syslog_identifier = "test"
         config.service.exec_start.append(["/bin/sleep", "3600"])
         proc = SimpleProcess(config, loop=self.loop)
-        proc.start()
-        yield from proc.started
-        proc.task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            yield from proc.task
-
-    @async_test
-    def test_task(self):
-        config = unitd.config.Config()
-        config.service.syslog_identifier = "test"
-        config.service.exec_start.append(["/bin/sleep", "3600"])
-        proc = SimpleProcess(config, loop=self.loop)
-        task = proc.start()
-        yield from proc.started
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            yield from task
-        result = yield from proc.returncode
-        self.assertEqual(result, -15)
+        yield from proc.start()
+        yield from proc.stop()
+        self.assertEqual((yield from proc.terminated), -15)
 
     @async_test
     def test_pre_post(self):
@@ -68,13 +54,9 @@ class TestProcess(AsyncTestCase):
             config.service.working_directory = pathname
             proc = SimpleProcess(config, loop=self.loop)
 
-            task = proc.start()
-            yield from proc.started
+            yield from proc.start()
             self.assertTrue(os.path.isdir(os.path.join(pathname, "one")))
             self.assertTrue(os.path.isdir(os.path.join(pathname, "two")))
             self.assertTrue(os.path.isdir(os.path.join(pathname, "three")))
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                yield from task
-            result = yield from proc.returncode
-            self.assertEqual(result, -15)
+            yield from proc.stop()
+            self.assertEqual((yield from proc.terminated), -15)

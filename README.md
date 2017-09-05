@@ -50,7 +50,7 @@ These configurations are supported the same as in systemd:
 
 These configurations are partially supported:
 
-* `ExecStart`: prefixes `@`, `-`, `+` are not supported
+* `ExecStart`: prefixes `@`, `-`, `+` are ignored
 * `WorkingDirectory`: value `~` is not supported
 
 

@@ -8,32 +8,45 @@ log = logging.getLogger("unitd.processpool")
 class ProcessPool:
     def __init__(self, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
-        self.tasks = []
+        # Future that will get a result if the quit signal is received
+        self.quit_signal = None
+        # Set to False when a process fails to start
+        self.success = True
+        # List of processes that we manage
+        self.processes = []
 
     def set_quit_signal(self, sig):
         log.debug("Installing handler for signal %d", sig)
-        self.tasks.append(create_future_for_signal(sig))
+        self.quit_signal = create_future_for_signal(sig)
 
     @asyncio.coroutine
     def start_sync(self, process):
-        log.debug("Starting process %s synchronously", process.logger.log_tag)
-        self.tasks.append(process.start())
-        yield from process.started
+        if not self.success:
+            log.debug("A previous process failed to start, %s will not be started", process.logger.log_tag)
+            return False
 
-    def start_async(self, process):
-        log.debug("Starting process %s ssynchronously", process.logger.log_tag)
-        self.tasks.append(process.start())
+        if self.quit_signal.done():
+            log.debug("Quit signal received, %s will not be started", process.logger.log_tag)
+            return False
+
+        log.debug("Starting process %s synchronously", process.logger.log_tag)
+        res = yield from process.start()
+        if not res:
+            self.success = False
+        self.processes.append(process)
+        return self.success
 
     @asyncio.coroutine
     def run(self):
-        done, pending = yield from asyncio.wait(
-            self.tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-            loop=self.loop)
+        try:
+            if not self.success:
+                return
 
-        log.debug("%d tasks done, %d tasks pending", len(done), len(pending))
-
-        for p in pending:
-            p.cancel()
-
-        yield from asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED, loop=self.loop)
+            done, pending = yield from asyncio.wait(
+                [p.terminated for p in self.processes],
+                return_when=asyncio.FIRST_COMPLETED,
+                loop=self.loop)
+        finally:
+            yield from asyncio.wait(
+                [p.stop() for p in self.processes],
+                return_when=asyncio.ALL_COMPLETED)

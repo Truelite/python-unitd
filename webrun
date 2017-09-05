@@ -30,10 +30,11 @@ class Xserver(SimpleProcess):
         config = unitd.config.Config()
         config.service.syslog_identifier = "xserver"
         config.service.exec_start.append(cmdline)
-        super().__init__(config, preexec_fn=self._before_xserver, loop=loop)
+        super().__init__(config, loop=loop)
         self.server_ready = None
 
-    def _before_xserver(self):
+    def _preexec(self):
+        super()._preexec()
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
@@ -43,9 +44,8 @@ class Xserver(SimpleProcess):
         # ignored, it sends SIGUSR1 to the parent process when it is ready to
         # accept connections. We wait until we receive SIGUSR1 before declaring
         # that the X server has been started.
-
         self.server_ready = create_future_for_signal(signal.SIGUSR1, loop=self.loop)
-        yield from super()._start()
+        return (yield from super()._start())
 
     @asyncio.coroutine
     def _confirm_start(self):
@@ -58,10 +58,11 @@ class Websockify(SimpleProcess):
         config = unitd.config.Config()
         config.service.syslog_identifier = "websocksify"
         config.service.exec_start.append(cmdline)
-        super().__init__(config, preexec_fn=self._preexec)
+        super().__init__(config)
         self.listen_port = listen_port
 
     def _preexec(self):
+        super()._preexec()
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     @asyncio.coroutine
@@ -114,11 +115,7 @@ class RemoteApplication:
         self.xserver = self._create_xserver()
         self.xclient = self._create_xclient()
         self.websockify = self._create_websockify()
-        self.started = asyncio.wait((
-            self.xserver.started,
-            self.xclient.started,
-            self.websockify.started,
-        ), loop=self.loop, return_when=asyncio.ALL_COMPLETED)
+        self.started = self.loop.create_future()
 
     def _create_xserver(self):
         """
@@ -168,6 +165,7 @@ class RemoteApplication:
         yield from pool.start_sync(self.xserver)
         yield from pool.start_sync(self.xclient)
         yield from pool.start_sync(self.websockify)
+        self.started.set_result(pool.success)
         yield from pool.run()
 
 
@@ -180,23 +178,29 @@ def start_everything(config, args):
 
     loop = asyncio.get_event_loop()
     try:
-        log.debug("Starting processes")
-        task = loop.create_task(runner.run())
+        result = {}
+        try:
+            log.debug("Starting processes")
+            task = loop.create_task(runner.run())
 
-        loop.run_until_complete(runner.started)
-        log.info("Ready for connections, interrupt with ^C")
+            result["started"] = loop.run_until_complete(runner.started)
 
-        connect_url = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=runner.websocket_listen_port)
-        log.info("Connect using %s", connect_url)
+            if result["started"]:
+                log.info("Ready for connections, interrupt with ^C")
 
-        print(json.dumps({
-            "url": connect_url,
-        }))
-        sys.stdout.close()
+                result["url"] = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=runner.websocket_listen_port)
+                log.info("Connect using %s", result["url"])
 
-        if args.open:
-            import webbrowser
-            webbrowser.open(connect_url)
+                if args.open:
+                    import webbrowser
+                    webbrowser.open(result["url"])
+        except Exception as e:
+            result["started"] = False
+            result["error"] = str(e)
+        finally:
+            print(json.dumps(result))
+            if args.daemon:
+                sys.stdout.close()
 
         if args.daemon:
             devnull_fd = os.open("/dev/null", os.O_RDWR)
@@ -205,8 +209,8 @@ def start_everything(config, args):
             os.dup2(devnull_fd, 2)
             os.umask(0o27)
 
-        loop.run_until_complete(task)
     finally:
+        loop.run_until_complete(task)
         loop.close()
 
 
