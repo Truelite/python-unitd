@@ -26,7 +26,7 @@ class Parser:
         self.lineno = None
 
     def parse_error(self, msg):
-        raise ParseError(self.fd, self.lineno, "key=value line found outside all sections")
+        raise ParseError(self.fd, self.lineno, msg)
 
     def parse(self):
         current_section = None
