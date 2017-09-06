@@ -61,10 +61,6 @@ class Websockify(SimpleProcess):
         super().__init__(config)
         self.listen_port = listen_port
 
-    def _preexec(self):
-        super()._preexec()
-        #signal.signal(signal.SIGINT, signal.SIG_IGN)
-
     @asyncio.coroutine
     def _confirm_start(self):
         yield from super()._confirm_start()
