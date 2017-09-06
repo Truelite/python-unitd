@@ -25,12 +25,20 @@ class Fail(RuntimeError):
     pass
 
 
+def helper_config(config):
+    res = unitd.config.Config()
+    #for skey in "working_directory", "user", "group":
+    for skey in "working_directory",:
+        setattr(res.service, skey, getattr(config.service, skey))
+    return res
+
+
 class Xserver(SimpleProcess):
-    def __init__(self, cmdline, loop=None):
-        config = unitd.config.Config()
-        config.service.syslog_identifier = "xserver"
-        config.service.exec_start.append(cmdline)
-        super().__init__(config, loop=loop)
+    def __init__(self, config, cmdline, loop=None):
+        x_config = helper_config(config)
+        x_config.service.syslog_identifier = "xserver"
+        x_config.service.exec_start.append(cmdline)
+        super().__init__(x_config, loop=loop)
         self.server_ready = None
 
     def _preexec(self):
@@ -54,12 +62,12 @@ class Xserver(SimpleProcess):
 
 
 class Websockify(SimpleProcess):
-    def __init__(self, cmdline, listen_port, loop=None):
-        config = unitd.config.Config()
-        config.service.syslog_identifier = "websocksify"
-        config.service.exec_start.append(cmdline)
-        super().__init__(config)
-        self.listen_port = listen_port
+    def __init__(self, config, cmdline, loop=None):
+        wr_config = helper_config(config)
+        wr_config.service.syslog_identifier = "websocksify"
+        wr_config.service.exec_start.append(cmdline)
+        super().__init__(wr_config)
+        self.listen_port = config.webrun.web_port
 
     @asyncio.coroutine
     def _confirm_start(self):
@@ -122,7 +130,7 @@ class RemoteApplication:
                "-SecurityTypes", "None",
                "-localhost",
                ":{}".format(self.display_number))
-        return Xserver(cmd, loop=self.loop)
+        return Xserver(self.config, cmd, loop=self.loop)
 
     def _create_xclient(self):
         """
@@ -144,7 +152,7 @@ class RemoteApplication:
                "--web", "/usr/share/novnc/",
                str(self.config.webrun.web_port),
                "localhost:{}".format(5900 + self.display_number))
-        return Websockify(cmd, self.config.webrun.web_port, loop=self.loop)
+        return Websockify(self.config, cmd, loop=self.loop)
 
     @asyncio.coroutine
     def run(self):
