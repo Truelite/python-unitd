@@ -58,10 +58,9 @@ class Process:
     """
     Base class for processes managed by unitd
     """
-    def __init__(self, config, env=None, preexec_fn=None, loop=None):
+    def __init__(self, config, env=None, loop=None):
         self.loop = loop if loop is not None else asyncio.get_event_loop()
         self.config = config
-        self.preexec_fn = preexec_fn
         self.env = env
         self.logger = ProcessLogger(config, self.loop)
         self._last_exit_code = None
@@ -76,8 +75,7 @@ class Process:
         """
         Hook passed as preexec_fn to the child process
         """
-        if self.preexec_fn:
-            self.preexec_fn()
+        pass
 
     def _get_subprocess_kwargs(self):
         """

@@ -36,7 +36,7 @@ class Xserver(SimpleProcess):
     def _preexec(self):
         super()._preexec()
         signal.signal(signal.SIGUSR1, signal.SIG_IGN)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        #signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     @asyncio.coroutine
     def _start(self):
@@ -63,7 +63,7 @@ class Websockify(SimpleProcess):
 
     def _preexec(self):
         super()._preexec()
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        #signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     @asyncio.coroutine
     def _confirm_start(self):
@@ -134,11 +134,9 @@ class RemoteApplication:
         """
         env = dict(os.environ)
         env["DISPLAY"] = ":{}".format(self.display_number)
-        def _preexec():
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
         if self.config.service.syslog_identifier is None:
             self.config.service.syslog_identifier = "xclient"
-        return SimpleProcess(self.config, preexec_fn=_preexec, env=env, loop=self.loop)
+        return SimpleProcess(self.config, env=env, loop=self.loop)
 
     def _create_websockify(self):
         """
