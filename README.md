@@ -45,6 +45,7 @@ Currently ignored
 These configurations are supported the same as in systemd:
 
 * `SyslogIdentifier`
+* `WorkingDirectory`
 * `ExecStartPre`
 * `ExecStartPost`
 * `ExecStop`
@@ -54,11 +55,12 @@ These configurations are supported the same as in systemd:
 * `TimeoutSec`
 * `TimeoutStopSec`
 
-These configurations are partially supported:
+These configurations are supported with some differences:
 
 * `ExecStart`: prefixes `@`, `-`, `+` are ignored
-* `WorkingDirectory`: value `~` is not supported
 * `KillMode`: values `control-group` and `mixed` are treated the same as `process`
+* `User`, `Group`: can also take an environment variable prefixed by `$`, like
+  `$SUDO_UID` or `$SUDO_GID`
 
 
 ## `[Webrun]` section

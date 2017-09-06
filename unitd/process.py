@@ -75,7 +75,11 @@ class Process:
         """
         Hook passed as preexec_fn to the child process
         """
-        pass
+        # Set user and group id
+        if os.getgid() == 0 and self.config.service.group != 0:
+            os.setgid(self.config.service.group)
+        if os.getuid() == 0 and self.config.service.user != 0:
+            os.setuid(self.config.service.user)
 
     def _get_subprocess_kwargs(self):
         """

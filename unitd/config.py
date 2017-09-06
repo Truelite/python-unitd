@@ -1,4 +1,7 @@
 import re
+import os
+import pwd
+import grp
 import signal
 import logging
 
@@ -94,6 +97,28 @@ class Parser:
                 res += int(val)
         return res
 
+    def parse_user(self, s):
+        if s.startswith('$'):
+            s = os.environ[s[1:]]
+        if s.isdigit():
+            return int(s)
+        try:
+            p = pwd.getpwnam(s)
+        except KeyError:
+            self.parse_error("invalid user name: `{}`".format(s))
+        return p.pw_uid
+
+    def parse_group(self, s):
+        if s.startswith('$'):
+            s = os.environ[s[1:]]
+        if s.isdigit():
+            return int(s)
+        try:
+            g = grp.getgrnam(s)
+        except KeyError:
+            self.parse_error("invalid group name: `{}`".format(s))
+        return g.gr_gid
+
 
 class Unit:
     def __init__(self):
@@ -116,6 +141,8 @@ class Service:
         self.kill_signal = signal.SIGTERM
         self.send_sigkill = True
         self.timeout_stop_sec = 2
+        self.user = os.getuid()
+        self.group = os.getgid()
 
     def get_subprocess_kwargs(self, **kw):
         if self.working_directory is not None:
@@ -147,6 +174,24 @@ class Service:
             self.timeout_stop_sec = parser.parse_delay(val)
         elif key == "TimeoutStopSec":
             self.timeout_stop_sec = parser.parse_delay(val)
+        elif key == "User":
+            self.user = parser.parse_user(val)
+        elif key == "Group":
+            self.group = parser.parse_group(val)
+
+    def postprocess(self):
+        if self.working_directory == "~":
+            try:
+                p = pwd.getpwuid(self.user)
+            except KeyError:
+                log.warn("cannot find passwd information for user id {}".format(self.user))
+                self.working_directory = None
+            self.working_directory = p.pw_dir
+
+        if os.getuid() != 0 and os.getuid != self.user:
+            log.warn("runnig as non-root: ignoring request to run as user {}".format(self.user))
+        if os.getuid() != 0 and os.getgid != self.group:
+            log.warn("runnig as non-root: ignoring request to run as group {}".format(self.group))
 
 
 class Webrun:
@@ -183,3 +228,4 @@ class Config:
                 elif section == "webrun":
                     self.webrun.from_config(parser, key, val)
 
+        self.service.postprocess()
