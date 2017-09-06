@@ -42,8 +42,12 @@ class ProcessPool:
             if not self.success:
                 return
 
+            wait_for = [p.terminated for p in self.processes]
+            if self.quit_signal:
+                wait_for.append(self.quit_signal)
+
             done, pending = yield from asyncio.wait(
-                [p.terminated for p in self.processes],
+                wait_for,
                 return_when=asyncio.FIRST_COMPLETED,
                 loop=self.loop)
         finally:
