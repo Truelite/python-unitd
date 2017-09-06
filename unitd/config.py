@@ -3,6 +3,7 @@ import os
 import pwd
 import grp
 import signal
+from contextlib import contextmanager
 import logging
 
 log = logging.getLogger("unitd.config")
@@ -192,6 +193,53 @@ class Service:
             log.warn("runnig as non-root: ignoring request to run as user {}".format(self.user))
         if os.getuid() != 0 and os.getgid != self.group:
             log.warn("runnig as non-root: ignoring request to run as group {}".format(self.group))
+
+    @contextmanager
+    def nonroot(self):
+        """
+        Context manager that runs code as non-root, using the user in this
+        configuration.
+        """
+        changed_gid = False
+        if os.getgid() == 0 and self.group != 0:
+            os.setegid(self.group)
+            changed_gid = True
+
+        changed_uid = False
+        if os.getuid() == 0 and self.user != 0:
+            os.seteuid(self.user)
+            changed_uid = True
+
+        if changed_uid:
+            try:
+                user_info = pwd.getpwuid(self.user)
+            except KeyError:
+                user_info = None
+
+            if user_info is not None:
+                old_LOGNAME = os.environ.get("LOGNAME", None)
+                old_USER = os.environ.get("USER", None)
+                old_USERNAME = os.environ.get("USERNAME", None)
+                old_HOME = os.environ.get("HOME", None)
+
+                os.environ["LOGNAME"] = user_info.pw_name
+                os.environ["USER"] = user_info.pw_name
+                os.environ["USERNAME"] = user_info.pw_name
+                os.environ["HOME"] = user_info.pw_dir
+
+        yield
+
+        if changed_uid and user_info is not None:
+            os.environ["LOGNAME"] = old_LOGNAME
+            os.environ["USER"] = old_USER
+            os.environ["USERNAME"] = old_USERNAME
+            os.environ["HOME"] = old_HOME
+
+        if changed_uid:
+            os.setuid(0)
+
+        if changed_gid:
+            os.setgid(0)
 
 
 class Webrun:

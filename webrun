@@ -27,8 +27,7 @@ class Fail(RuntimeError):
 
 def helper_config(config):
     res = unitd.config.Config()
-    #for skey in "working_directory", "user", "group":
-    for skey in "working_directory",:
+    for skey in "working_directory", "user", "group":
         setattr(res.service, skey, getattr(config.service, skey))
     return res
 
@@ -37,6 +36,8 @@ class Xserver(SimpleProcess):
     def __init__(self, config, cmdline, loop=None):
         x_config = helper_config(config)
         x_config.service.syslog_identifier = "xserver"
+        x_config.service.user = os.getuid()
+        x_config.service.user = os.getgid()
         x_config.service.exec_start.append(cmdline)
         super().__init__(x_config, loop=loop)
         self.server_ready = None
@@ -189,10 +190,10 @@ def start_everything(config, args):
 
                 result["url"] = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=config.webrun.web_port)
                 log.info("Connect using %s", result["url"])
-
-                if args.open:
-                    import webbrowser
-                    webbrowser.open(result["url"])
+                if args.open and not args.daemon:
+                    with config.service.nonroot():
+                        import webbrowser
+                        webbrowser.open(result["url"])
         except Exception as e:
             result["started"] = False
             result["error"] = str(e)
@@ -258,12 +259,19 @@ def main():
         fd_r, fd_w = os.pipe()
         pid = os.fork()
         if pid != 0:
-            os.dup2(fd_r, 0)
-            os.close(fd_w)
-            # Parent process
-            # Wait for child
-            shutil.copyfileobj(sys.stdin, sys.stdout)
-            return
+            with nonroot():
+                os.dup2(fd_r, 0)
+                os.close(fd_w)
+                # Parent process
+                # Wait for child
+                child_info = sys.stdin.read()
+                sys.stdout.write(child_info)
+                if args.open:
+                    with config.service.nonroot():
+                        result = json.loads(child_info)
+                        import webbrowser
+                        webbrowser.open(result["url"])
+                return
         os.dup2(fd_w, 1)
         os.close(fd_w)
 
