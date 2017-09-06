@@ -94,11 +94,9 @@ class RemoteApplication:
     connection to it over websocket
     """
     def __init__(self, config,
-                 websocket_listen_port,
                  desktop_title="Remote application",
                  desktop_display=DEFAULT_DISPLAY):
         self.config = config
-        self.websocket_listen_port = websocket_listen_port
         self.desktop_title = desktop_title
 
         for xserver in XSERVERS:
@@ -150,9 +148,9 @@ class RemoteApplication:
         cmd = ("websockify",
                "--run-once",
                "--web", "/usr/share/novnc/",
-               str(self.websocket_listen_port),
+               str(self.config.webrun.web_port),
                "localhost:{}".format(5900 + self.display_number))
-        return Websockify(cmd, self.websocket_listen_port, loop=self.loop)
+        return Websockify(cmd, self.config.webrun.web_port, loop=self.loop)
 
     @asyncio.coroutine
     def run(self):
@@ -172,7 +170,6 @@ class RemoteApplication:
 def start_everything(config, args):
     runner = RemoteApplication(
             config=config,
-            websocket_listen_port=args.port,
             desktop_title=args.title,
             desktop_display=args.display)
 
@@ -188,7 +185,7 @@ def start_everything(config, args):
             if result["started"]:
                 log.info("Ready for connections, interrupt with ^C")
 
-                result["url"] = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=runner.websocket_listen_port)
+                result["url"] = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=config.webrun.web_port)
                 log.info("Connect using %s", result["url"])
 
                 if args.open:
@@ -242,12 +239,12 @@ def main():
     else:
         logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
 
+    config = unitd.config.Config()
     if args.service:
         if len(args.cmd) != 1:
             raise Fail("When using --service only provide one argument: the pathname to the .service file")
-        config = unitd.config.Config.read_file(args.cmd[0])
+        config.read_file(args.cmd[0])
     else:
-        config = unitd.config.Config()
         config.service.exec_start.append(args.cmd)
 
     if args.geometry is not None:

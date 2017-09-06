@@ -167,23 +167,19 @@ class Config:
         self.service = Service()
         self.webrun = Webrun()
 
-    @classmethod
-    def read_file(cls, pathname):
+    def read_file(self, pathname):
         """
         Read a unit file from the given pathname, returning the parsed
         Config
         """
-        res = cls()
-
         with open(pathname, "rt") as fd:
             parser = Parser(fd)
             for section, key, val in parser.parse():
                 section = section.lower()
                 if section == "service":
-                    res.service.from_config(parser, key, val)
+                    self.service.from_config(parser, key, val)
                 elif section == "unit":
-                    res.unit.from_config(parser, key, val)
+                    self.unit.from_config(parser, key, val)
                 elif section == "webrun":
-                    res.webrun.from_config(parser, key, val)
+                    self.webrun.from_config(parser, key, val)
 
-        return res
