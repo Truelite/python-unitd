@@ -237,10 +237,9 @@ def main():
         level = logging.DEBUG
     elif args.verbose:
         level = logging.INFO
+
     if args.logfile:
-        logging.basicConfig(level=level, filename=args.logfile, format=log_format)
-    else:
-        logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
+        config.webrun.log_file = args.logfile
 
     if args.service:
         if len(args.cmd) != 1:
@@ -248,6 +247,11 @@ def main():
         config.read_file(args.cmd[0])
     else:
         config.service.exec_start.append(args.cmd)
+
+    if config.webrun.log_file:
+        logging.basicConfig(level=level, filename=config.webrun.log_file, format=log_format)
+    else:
+        logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
 
     if args.display is not None:
         config.webrun.display_number = args.display

@@ -279,6 +279,7 @@ class Webrun:
         self.display_geometry = "800x600"
         self._vnc_port = None
         self.web_port = HostPort(port=6080)
+        self.log_file = None
 
     def from_config(self, parser, key, val):
         if key == "DisplayNumber":
@@ -289,6 +290,8 @@ class Webrun:
             self._vnc_port = parser.parse_host_port(val)
         elif key == "WebPort":
             self.web_port = parser.parse_host_port(val)
+        elif key == "LogFile":
+            self.log_file = val
 
     @property
     def vnc_port(self):

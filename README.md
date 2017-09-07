@@ -68,6 +68,11 @@ These configurations are supported with some differences:
 The `Webrun` section contains configuration directives that are specific to
 webrun:
 
+* `DisplayNumber` (default: 4): display number to use for the X VNC server
 * `DisplayGeometry` (default: `800x600`): geometry of the X display where the
   application is run
-* `WebPort` (default: 6080): port used for the http server / websocket server
+* `VNCPort` (default: localhost:5900 + DisplayNumber): `host:port` to use for
+  VNC communication. `host:` can be omitted and defaults to `localhost`
+* `WebPort` (default: 6080): `host:port` to use for the http server / websocket
+  server. `host:` can be omitted and defaults to `localhost`
+* `LogFile` (default: standard error): write log output to the given file
