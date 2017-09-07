@@ -24,6 +24,28 @@ re_section = re.compile(r"^\[(?P<section>[^]]+)\]\s*$")
 re_assign = re.compile(r"^\s*(?P<key>\w+)\s*=\s*(?P<val>.+?)\s*$")
 
 
+class HostPort:
+    """
+    Hold a host:port pair
+    """
+    def __init__(self, host="localhost", port=None):
+        self.host = host
+        self.port = port
+
+    def __str__(self):
+        if self.host is not None:
+            return "{}:{}".format(self.host, self.port)
+        else:
+            return str(self.port)
+
+    @classmethod
+    def parse(cls, s):
+        mo = re.match(r"^(?:(?P<host>[^:]+):)?(?P<port>\d+)$", s)
+        if not mo:
+            raise ValueError("invalid [host:]port: `{}`".format(s))
+        return cls(host=(mo.group("host") or None), port=int(mo.group("port")))
+
+
 class Parser:
     def __init__(self, fd):
         self.fd = fd
@@ -119,6 +141,12 @@ class Parser:
         except KeyError:
             self.parse_error("invalid group name: `{}`".format(s))
         return g.gr_gid
+
+    def parse_host_port(self, s):
+        try:
+            return HostPort.parse(s)
+        except ValueError as e:
+            self.parse_error(e.msg)
 
 
 class Unit:
@@ -246,15 +274,28 @@ class Webrun:
     def __init__(self):
         self.display_number = 4
         self.display_geometry = "800x600"
-        self.web_port = 6080
+        self._vnc_port = None
+        self.web_port = HostPort(port=6080)
 
     def from_config(self, parser, key, val):
         if key == "DisplayNumber":
             self.display_geometry = parser.parse_int(val)
         if key == "DisplayGeometry":
             self.display_geometry = val
+        elif key == "VNCPort":
+            self._vnc_port = parser.parse_host_port(val)
         elif key == "WebPort":
-            self.web_port = parser.parse_int(val)
+            self.web_port = parser.parse_host_port(val)
+
+    @property
+    def vnc_port(self):
+        if self._vnc_port is not None:
+            return self._vnc_port
+        return HostPort(port=self.display_number + 5900)
+
+    @vnc_port.setter
+    def vnc_port(self, value):
+        self._vnc_port = value
 
 
 class Config:
@@ -280,3 +321,4 @@ class Config:
                     self.webrun.from_config(parser, key, val)
 
         self.service.postprocess()
+        self.webrun.postprocess()

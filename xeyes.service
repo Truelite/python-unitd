@@ -10,3 +10,5 @@ Group = enrico
 [Webrun]
 DisplayNumber = 1
 DisplayGeometry = 1000x750
+#VNCPort = 10.0.0.1:2345
+#WebPort = 10.0.0.1:6090

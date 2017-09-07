@@ -13,6 +13,7 @@ from unitd import SimpleProcess
 from unitd.processpool import ProcessPool
 from unitd.signals import create_future_for_signal
 import unitd.config
+from unitd.config import HostPort
 
 
 XSERVERS = ("Xtigervnc", "Xvnc4")
@@ -72,7 +73,7 @@ class Websockify(SimpleProcess):
     @asyncio.coroutine
     def _confirm_start(self):
         yield from super()._confirm_start()
-        yield from self._wait_for_listen("127.0.0.1", self.listen_port)
+        yield from self._wait_for_listen(self.listen_port.host, self.listen_port.port)
 
     @asyncio.coroutine
     def _wait_for_listen(self, host, port):
@@ -125,7 +126,8 @@ class RemoteApplication:
                "-geometry", self.config.webrun.display_geometry,
                "-desktop", str(self.config.webrun.display_number),
                "-SecurityTypes", "None",
-               "-localhost",
+               "-interface", self.config.webrun.vnc_port.host,
+               "-rfbport", str(self.config.webrun.vnc_port.port),
                ":{}".format(self.config.webrun.display_number))
         return Xserver(self.config, cmd, loop=self.loop)
 
@@ -148,7 +150,7 @@ class RemoteApplication:
                "--run-once",
                "--web", "/usr/share/novnc/",
                str(self.config.webrun.web_port),
-               "localhost:{}".format(5900 + self.config.webrun.display_number))
+               str(self.config.webrun.vnc_port))
         return Websockify(self.config, cmd, loop=self.loop)
 
     @asyncio.coroutine
@@ -183,7 +185,7 @@ def start_everything(config, args):
             if result["started"]:
                 log.info("Ready for connections, interrupt with ^C")
 
-                result["url"] = "http://localhost:{port}/vnc.html?host=localhost&port={port}&autoconnect=true".format(port=config.webrun.web_port)
+                result["url"] = "http://{addr}/vnc.html?host={addr.host}&port={addr.port}&autoconnect=true".format(addr=config.webrun.web_port)
                 log.info("Connect using %s", result["url"])
                 if args.open and not args.daemon:
                     with config.service.nonroot():
@@ -220,7 +222,8 @@ def main():
     parser.add_argument("--geometry", action="store", help="X display geometry")
     parser.add_argument("--display", action="store", type=int, default=None, help="X display number, default: {}".format(config.webrun.display_number))
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
-    parser.add_argument("--port", action="store", type=int, default=None, help="websocket server port, default: 6080")
+    parser.add_argument("--vnc-port", action="store", default=None, help="vnc server port, default: 5900 + display number")
+    parser.add_argument("--web-port", action="store", default=None, help="websocket server port, default: 6080")
     parser.add_argument("--open", action="store_true", help="open application in browser")
     parser.add_argument("--daemon", action="store_true", help="daemonize")
     parser.add_argument("--service", action="store_true", help="argument is a .service file rather than a command line")
@@ -250,8 +253,10 @@ def main():
         config.webrun.display_number = args.display
     if args.geometry is not None:
         config.webrun.display_geometry = args.geometry
-    if args.port is not None:
-        config.webrun.web_port = args.port
+    if args.vnc_port is not None:
+        config.webrun.vnc_port = HostPort.parse(args.vnc_port)
+    if args.web_port is not None:
+        config.webrun.web_port = HostPort.parse(args.web_port)
 
     if args.daemon:
         fd_r, fd_w = os.pipe()
