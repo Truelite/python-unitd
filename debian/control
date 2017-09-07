@@ -1,0 +1,13 @@
+Source: unitd
+Maintainer: Enrico Zini <enrico@debian.org>
+Section: python
+Priority: optional
+Build-Depends: dh-python, python3-all, debhelper (>= 9)
+Standards-Version: 3.9.6
+Homepage: https://labs.truelite.it/projects/unitd
+
+Package: python3-unitd
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends}
+Description: python process management
+
