@@ -113,7 +113,7 @@ class RemoteApplication:
         if self.xserver_path is None:
             raise Fail("X server not found. Tried: " + ", ".join(XSERVERS))
 
-        self.display_number = DEFAULT_DISPLAY # TODO: generate a unique display number
+        self.desktop_display = desktop_display
         self.loop = asyncio.get_event_loop()
         self.xserver = self._create_xserver()
         self.xclient = self._create_xclient()
@@ -130,7 +130,7 @@ class RemoteApplication:
                "-desktop", self.desktop_title,
                "-SecurityTypes", "None",
                "-localhost",
-               ":{}".format(self.display_number))
+               ":{}".format(self.desktop_display))
         return Xserver(self.config, cmd, loop=self.loop)
 
     def _create_xclient(self):
@@ -138,7 +138,7 @@ class RemoteApplication:
         Start the X client
         """
         env = dict(os.environ)
-        env["DISPLAY"] = ":{}".format(self.display_number)
+        env["DISPLAY"] = ":{}".format(self.desktop_display)
         if self.config.service.syslog_identifier is None:
             self.config.service.syslog_identifier = "xclient"
         return SimpleProcess(self.config, env=env, loop=self.loop)
@@ -152,7 +152,7 @@ class RemoteApplication:
                "--run-once",
                "--web", "/usr/share/novnc/",
                str(self.config.webrun.web_port),
-               "localhost:{}".format(5900 + self.display_number))
+               "localhost:{}".format(5900 + self.desktop_display))
         return Websockify(self.config, cmd, loop=self.loop)
 
     @asyncio.coroutine
