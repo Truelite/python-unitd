@@ -16,7 +16,6 @@ import unitd.config
 
 
 XSERVERS = ("Xtigervnc", "Xvnc4")
-DEFAULT_DISPLAY = 10
 
 log = logging.getLogger()
 
@@ -98,9 +97,7 @@ class RemoteApplication:
     Run an application inside a private VNC server, and export the VNC
     connection to it over websocket
     """
-    def __init__(self, config,
-                 desktop_title="Remote application",
-                 desktop_display=DEFAULT_DISPLAY):
+    def __init__(self, config, desktop_title="Remote application"):
         self.config = config
         self.desktop_title = desktop_title
 
@@ -113,7 +110,6 @@ class RemoteApplication:
         if self.xserver_path is None:
             raise Fail("X server not found. Tried: " + ", ".join(XSERVERS))
 
-        self.desktop_display = desktop_display
         self.loop = asyncio.get_event_loop()
         self.xserver = self._create_xserver()
         self.xclient = self._create_xclient()
@@ -127,10 +123,10 @@ class RemoteApplication:
         """
         cmd = (self.xserver_path, "-ac",
                "-geometry", self.config.webrun.display_geometry,
-               "-desktop", self.desktop_title,
+               "-desktop", str(self.config.webrun.display_number),
                "-SecurityTypes", "None",
                "-localhost",
-               ":{}".format(self.desktop_display))
+               ":{}".format(self.config.webrun.display_number))
         return Xserver(self.config, cmd, loop=self.loop)
 
     def _create_xclient(self):
@@ -138,7 +134,7 @@ class RemoteApplication:
         Start the X client
         """
         env = dict(os.environ)
-        env["DISPLAY"] = ":{}".format(self.desktop_display)
+        env["DISPLAY"] = ":{}".format(self.config.webrun.display_number)
         if self.config.service.syslog_identifier is None:
             self.config.service.syslog_identifier = "xclient"
         return SimpleProcess(self.config, env=env, loop=self.loop)
@@ -152,7 +148,7 @@ class RemoteApplication:
                "--run-once",
                "--web", "/usr/share/novnc/",
                str(self.config.webrun.web_port),
-               "localhost:{}".format(5900 + self.desktop_display))
+               "localhost:{}".format(5900 + self.config.webrun.display_number))
         return Websockify(self.config, cmd, loop=self.loop)
 
     @asyncio.coroutine
@@ -173,8 +169,7 @@ class RemoteApplication:
 def start_everything(config, args):
     runner = RemoteApplication(
             config=config,
-            desktop_title=args.title,
-            desktop_display=args.display)
+            desktop_title=args.title)
 
     loop = asyncio.get_event_loop()
     try:
@@ -215,13 +210,15 @@ def start_everything(config, args):
 
 
 def main():
+    config = unitd.config.Config()
+
     parser = argparse.ArgumentParser(
             description="start X client on a private X server exported via VNC on the web")
     parser.add_argument("--verbose", "-v", action="store_true", help="verbose output")
     parser.add_argument("--debug", action="store_true", help="debug output")
     parser.add_argument("--logfile", action="store", help="lot to the given file")
     parser.add_argument("--geometry", action="store", help="X display geometry")
-    parser.add_argument("--display", action="store", type=int, default=DEFAULT_DISPLAY, help="X display number")
+    parser.add_argument("--display", action="store", type=int, default=None, help="X display number, default: {}".format(config.webrun.display_number))
     parser.add_argument("--title", action="store", default="Desktop session", help="desktop session title")
     parser.add_argument("--port", action="store", type=int, default=None, help="websocket server port, default: 6080")
     parser.add_argument("--open", action="store_true", help="open application in browser")
@@ -242,7 +239,6 @@ def main():
     else:
         logging.basicConfig(level=level, stream=sys.stderr, format=log_format)
 
-    config = unitd.config.Config()
     if args.service:
         if len(args.cmd) != 1:
             raise Fail("When using --service only provide one argument: the pathname to the .service file")
@@ -250,6 +246,8 @@ def main():
     else:
         config.service.exec_start.append(args.cmd)
 
+    if args.display is not None:
+        config.webrun.display_number = args.display
     if args.geometry is not None:
         config.webrun.display_geometry = args.geometry
     if args.port is not None:

@@ -244,10 +244,13 @@ class Service:
 
 class Webrun:
     def __init__(self):
+        self.display_number = 4
         self.display_geometry = "800x600"
         self.web_port = 6080
 
     def from_config(self, parser, key, val):
+        if key == "DisplayNumber":
+            self.display_geometry = parser.parse_int(val)
         if key == "DisplayGeometry":
             self.display_geometry = val
         elif key == "WebPort":
