@@ -262,7 +262,7 @@ def main():
         fd_r, fd_w = os.pipe()
         pid = os.fork()
         if pid != 0:
-            with nonroot():
+            with config.service.nonroot():
                 os.dup2(fd_r, 0)
                 os.close(fd_w)
                 # Parent process
