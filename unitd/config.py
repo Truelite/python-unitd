@@ -321,4 +321,3 @@ class Config:
                     self.webrun.from_config(parser, key, val)
 
         self.service.postprocess()
-        self.webrun.postprocess()
