@@ -1,0 +1,4 @@
+include MANMIFEST.in
+include README.md
+include tests/*.py
+include xeyes.service
