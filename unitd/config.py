@@ -283,7 +283,7 @@ class Webrun:
 
     def from_config(self, parser, key, val):
         if key == "DisplayNumber":
-            self.display_geometry = parser.parse_int(val)
+            self.display_number = parser.parse_int(val)
         if key == "DisplayGeometry":
             self.display_geometry = val
         elif key == "VNCPort":
