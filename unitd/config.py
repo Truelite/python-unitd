@@ -43,7 +43,10 @@ class HostPort:
         mo = re.match(r"^(?:(?P<host>[^:]+):)?(?P<port>\d+)$", s)
         if not mo:
             raise ValueError("invalid [host:]port: `{}`".format(s))
-        return cls(host=(mo.group("host") or None), port=int(mo.group("port")))
+        if mo.group("host"):
+            return cls(host=mo.group("host"), port=int(mo.group("port")))
+        else:
+            return cls(port=int(mo.group("port")))
 
 
 class Parser:
