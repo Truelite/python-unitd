@@ -1,0 +1,12 @@
+[Unit]
+Description = xeyes 7.7
+
+[Service]
+Type = simple
+ExecStart = xeyes
+User = enrico
+Group = enrico
+
+[Webrun]
+DisplayNumber = 1
+DisplayGeometry = 1000x750
