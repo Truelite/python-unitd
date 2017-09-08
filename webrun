@@ -82,10 +82,13 @@ class Websockify(SimpleProcess):
         Try to connect to a (host, port) until something starts listening on it
         """
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
+        # In 3.5, sock_connect can take names to be resolved.
+        # In 3.4, we need to resolve them first.
+        resolved = yield from self.loop.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM)
         try:
             while True:
                 try:
-                    yield from self.loop.sock_connect(sock, (host, port))
+                    yield from self.loop.sock_connect(sock, resolved[0][4])
                 except ConnectionRefusedError:
                     yield from asyncio.sleep(0.2)
                 else:
