@@ -283,6 +283,7 @@ class SimpleProcess(Process):
         if len(self.config.service.exec_start) != 1:
             raise RuntimeError("ExecStart should only have one entry for simple processes")
         self.cmdline, self.flags = self._parse_cmdline(self.config.service.exec_start[0], "-+@")
+        self._start_confirmed = False
 
     def _preexec(self):
         super()._preexec()
@@ -302,13 +303,16 @@ class SimpleProcess(Process):
         )
         self.logger.start(self.proc)
 
+        task_confirm_start = self.loop.create_task(self._confirm_start())
+
         # Run self._confirm_start to give subclassers a way to detect when the
         # startup is done, like polling on a tcp port, or waiting for a signal
         done, pending = yield from asyncio.wait((
-            self._confirm_start(),
+            task_confirm_start,
             self.proc.wait()), return_when=asyncio.FIRST_COMPLETED)
-        for p in pending:
-            p.cancel()
+
+        if not self._start_confirmed:
+            task_confirm_start.cancel()
 
         try:
             if self.proc.returncode is not None:
@@ -325,4 +329,4 @@ class SimpleProcess(Process):
         """
         Wait until confirmation that the process has successfully started
         """
-        pass
+        self._start_confirmed = True
