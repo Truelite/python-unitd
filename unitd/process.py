@@ -130,7 +130,7 @@ class Process:
         proc = yield from asyncio.create_subprocess_exec(
             *cmdline,
             stdin=asyncio.subprocess.DEVNULL,
-            **kw,
+            **kw
         )
         self.logger.start(proc)
 
