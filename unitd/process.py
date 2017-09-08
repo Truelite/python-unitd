@@ -293,7 +293,7 @@ class SimpleProcess(Process):
         kw = self._get_subprocess_kwargs()
 
         self.proc = yield from asyncio.create_subprocess_exec(
-            *self.cmdline, stdin=asyncio.subprocess.DEVNULL, **kw,
+            *self.cmdline, stdin=asyncio.subprocess.DEVNULL, **kw
         )
         self.logger.start(self.proc)
 
