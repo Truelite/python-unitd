@@ -56,8 +56,6 @@ class ProcessLogger:
         """
         Stop the logging tasks
         """
-        self.stdout_logger.cancel()
-        self.stderr_logger.cancel()
         self.log_tag = self.base_log_tag
 
 
