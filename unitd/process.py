@@ -9,6 +9,13 @@ __ALL__ = ("SimpleProcess", "OneshotProcess")
 
 log = logging.getLogger("unitd.process")
 
+def create_future(loop):
+    """
+    Wrapper for create_future for compatibility with python 3.4
+    """
+    return asyncio.Future(loop=loop)
+    #return loop.create_future()
+
 
 class ProcessLogger:
     """
@@ -65,11 +72,11 @@ class Process:
         self.logger = ProcessLogger(config, self.loop)
         self._last_exit_code = None
         # Set to True when start succeeds, False when start fails
-        self.started = self.loop.create_future()
+        self.started = create_future(self.loop)
         # Future set to the process exit code when it exits
         self.terminated = None
         # Set to True when stop succeeds
-        self.stopped = self.loop.create_future()
+        self.stopped = create_future(self.loop)
 
     def _preexec(self):
         """
@@ -252,7 +259,7 @@ class OneshotProcess(Process):
         """
         Start execution of the command, and logging of its stdout and stderr
         """
-        self.terminated = self.loop.create_future()
+        self.terminated = create_future(self.loop)
 
         try:
             if not (yield from self._run_sync_commands(self.config.service.exec_start)):

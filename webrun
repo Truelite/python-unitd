@@ -14,6 +14,7 @@ from unitd.processpool import ProcessPool
 from unitd.signals import create_future_for_signal
 import unitd.config
 from unitd.config import HostPort
+from unitd.process import create_future
 
 
 XSERVERS = ("Xtigervnc", "Xvnc4")
@@ -115,7 +116,7 @@ class RemoteApplication:
         self.xserver = self._create_xserver()
         self.xclient = self._create_xclient()
         self.websockify = self._create_websockify()
-        self.started = self.loop.create_future()
+        self.started = create_future(self.loop)
 
     def _create_xserver(self):
         """
