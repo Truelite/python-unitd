@@ -248,10 +248,9 @@ class Service:
                 user_info = None
 
             if user_info is not None:
-                old_LOGNAME = os.environ.get("LOGNAME", None)
-                old_USER = os.environ.get("USER", None)
-                old_USERNAME = os.environ.get("USERNAME", None)
-                old_HOME = os.environ.get("HOME", None)
+                old = {}
+                for key in "LOGNAME", "USER", "USERNAME", "HOME":
+                    old[key] = os.environ.get(key, None)
 
                 os.environ["LOGNAME"] = user_info.pw_name
                 os.environ["USER"] = user_info.pw_name
@@ -261,10 +260,11 @@ class Service:
         yield
 
         if changed_uid and user_info is not None:
-            os.environ["LOGNAME"] = old_LOGNAME
-            os.environ["USER"] = old_USER
-            os.environ["USERNAME"] = old_USERNAME
-            os.environ["HOME"] = old_HOME
+            for k, v in old.items():
+                if v is None:
+                    del os.environ[k]
+                else:
+                    os.environ[k] = v
 
         if changed_uid:
             os.setuid(0)
