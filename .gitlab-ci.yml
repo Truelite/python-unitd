@@ -7,15 +7,15 @@ tests:
   script:
    - nose2-3
 
-build_wheel:
- stage: build
- only:
-  - master
- script:
-  - python3 setup.py bdist_wheel
- artifacts:
-  paths:
-   - dists/*
+# build_wheel:
+#  stage: build
+#  only:
+#   - master
+#  script:
+#   - python3 setup.py bdist_wheel
+#  artifacts:
+#   paths:
+#    - dists/*
 
 build_deb:
  stage: build
