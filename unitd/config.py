@@ -280,6 +280,7 @@ class Webrun:
         self._vnc_port = None
         self.web_port = HostPort(port=6080)
         self.log_file = None
+        self.web_connect_timeout = None
 
     def from_config(self, parser, key, val):
         if key == "DisplayNumber":
@@ -292,6 +293,8 @@ class Webrun:
             self.web_port = parser.parse_host_port(val)
         elif key == "LogFile":
             self.log_file = val
+        elif key == "WebConnectTimeout":
+            self.web_connect_timeout = parser.parse_int(val)
 
     @property
     def vnc_port(self):

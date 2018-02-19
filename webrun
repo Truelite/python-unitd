@@ -159,11 +159,13 @@ class RemoteApplication:
         Start websockify to export the X client connection via a websocket
         server
         """
-        cmd = ("websockify",
+        cmd = ["websockify",
                "--run-once",
-               "--web", "/usr/share/novnc/",
-               str(self.config.webrun.web_port),
-               str(self.config.webrun.vnc_port))
+               "--web", "/usr/share/novnc/"]
+        if self.config.webrun.web_connect_timeout:
+            cmd += ["--timeout", str(self.config.webrun.web_connect_timeout)]
+        cmd.append(str(self.config.webrun.web_port))
+        cmd.append(str(self.config.webrun.vnc_port))
         return Websockify(self.config, cmd, loop=self.loop)
 
     @asyncio.coroutine
@@ -240,6 +242,7 @@ def main():
     parser.add_argument("--open", action="store_true", help="open application in browser")
     parser.add_argument("--daemon", action="store_true", help="daemonize")
     parser.add_argument("--service", action="store_true", help="argument is a .service file rather than a command line")
+    parser.add_argument("--web-connect-timeout", action="store", type=int, default=None, help="quit if there is no web connection after this amount of seconds, default: no timeout")
     parser.add_argument("cmd", nargs="+", help="command and arguments to run")
 
     args = parser.parse_args()
@@ -274,6 +277,8 @@ def main():
         config.webrun.vnc_port = HostPort.parse(args.vnc_port)
     if args.web_port is not None:
         config.webrun.web_port = HostPort.parse(args.web_port)
+    if args.web_connect_timeout is not None:
+        config.webrun.web_connect_timeout = args.web_connect_timeout
 
     if args.daemon:
         fd_r, fd_w = os.pipe()

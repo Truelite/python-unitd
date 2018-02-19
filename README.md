@@ -76,3 +76,5 @@ webrun:
 * `WebPort` (default: 6080): `host:port` to use for the http server / websocket
   server. `host:` can be omitted and defaults to `localhost`
 * `LogFile` (default: standard error): write log output to the given file
+* `WebConnectTimeout` (default: no timeout): exit if there is no http server /
+  websocket connection before this amount of seconds
