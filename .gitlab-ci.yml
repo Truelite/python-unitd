@@ -12,7 +12,7 @@ build_wheel:
  only:
   - master
  script:
-  python3 setup.py bdist_wheel
+  - python3 setup.py bdist_wheel
  artifacts:
   paths:
    - dists/*
@@ -22,9 +22,9 @@ build_deb:
  only:
   - master
  script:
-  fakeroot dpkg-buildpackage -us -uc
-  mkdir dists
-  mv ../python3-unitd*.deb ../webrun*.deb dists/
+  - fakeroot dpkg-buildpackage -us -uc
+  - mkdir dists
+  - mv ../python3-unitd*.deb ../webrun*.deb dists/
  artifacts:
   paths:
    - dists/*
