@@ -22,7 +22,7 @@ build_deb:
  only:
   - master
  script:
-  - dch -v 0.$(date --date=@$(git show --pretty=%at -s) +"%Y%m%d%H%M%S")-$(git show --pretty=%h -s)
+  - dch -v 0.$(date --date=@$(git show --pretty=%at -s) +"%Y%m%d%H%M%S")-$(git show --pretty=%h -s) "CI build from $(git show -s --pretty='%ae:%h: %s')"
   - dch --release
   - fakeroot dpkg-buildpackage -b -us -uc
   - mkdir dists
