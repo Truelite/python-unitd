@@ -5,7 +5,6 @@ stages:
 tests:
   stage: test
   tags:
-   - django
    - python
   script:
    - nose2-3
@@ -13,7 +12,6 @@ tests:
 build_wheel:
  stage: build
  tags:
-  - django
   - python
  only:
   - master
@@ -26,7 +24,6 @@ build_wheel:
 build_deb:
  stage: build
  tags:
-  - django
   - python
  only:
   - master
