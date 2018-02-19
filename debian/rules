@@ -6,3 +6,8 @@ export PYBUILD_NAME=unitd
 %:
 	dh $@ --with python3 --buildsystem=pybuild
 
+override_dh_auto_install:
+	dh_auto_install
+	mkdir -p debian/webrun/usr/bin
+	mv debian/python3-unitd/usr/bin/* debian/webrun/usr/bin
+

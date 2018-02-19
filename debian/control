@@ -11,3 +11,7 @@ Architecture: all
 Depends: ${misc:Depends}, ${python3:Depends}
 Description: python process management
 
+Package: webrun
+Architecture: all
+Depends: novnc, ${misc:Depends}, ${python3:Depends}
+Description: Run an X application in a web browser
