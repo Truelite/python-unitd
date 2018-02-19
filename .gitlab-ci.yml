@@ -4,11 +4,15 @@ stages:
 
 tests:
   stage: test
+  tags:
+   - python
   script:
    - nose2-3
 
 build_wheel:
  stage: build
+ tags:
+  - python
  only:
   - master
  script:
@@ -19,6 +23,8 @@ build_wheel:
 
 build_deb:
  stage: build
+ tags:
+  - python
  only:
   - master
  script:
