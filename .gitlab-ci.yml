@@ -1,0 +1,30 @@
+stages:
+ - test
+ - build
+
+tests:
+  stage: test
+  script:
+   - nose2-3
+
+build_wheel:
+ stage: build
+ only:
+  - master
+ script:
+  python3 setup.py bdist_wheel
+ artifacts:
+  paths:
+   - dists/*
+
+build_deb:
+ staged: build
+ only:
+  - master
+ script:
+  fakeroot dpkg-buildpackage -us -uc
+  mkdir dists
+  mv ../python3-unitd*.deb ../webrun*.deb dists/
+ artifacts:
+  path:
+   - dists/*
