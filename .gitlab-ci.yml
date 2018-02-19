@@ -22,7 +22,7 @@ build_deb:
  only:
   - master
  script:
-  - fakeroot dpkg-buildpackage -us -uc
+  - fakeroot dpkg-buildpackage -b -us -uc
   - mkdir dists
   - mv ../python3-unitd*.deb ../webrun*.deb dists/
  artifacts:
