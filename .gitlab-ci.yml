@@ -18,7 +18,7 @@ build_wheel:
    - dists/*
 
 build_deb:
- staged: build
+ stage: build
  only:
   - master
  script:
